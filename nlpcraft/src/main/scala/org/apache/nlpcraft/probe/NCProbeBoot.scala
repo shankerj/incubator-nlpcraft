@@ -18,7 +18,6 @@
 package org.apache.nlpcraft.probe
 
 import java.util.concurrent.CompletableFuture
-
 import com.typesafe.config.{Config, ConfigFactory, ConfigValueFactory}
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.nlpcraft.common.ascii.NCAsciiTable
@@ -40,6 +39,7 @@ import org.apache.nlpcraft.probe.mgrs.lifecycle.NCLifecycleManager
 import org.apache.nlpcraft.probe.mgrs.model.NCModelManager
 import org.apache.nlpcraft.probe.mgrs.nlp.NCProbeEnrichmentManager
 import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.dictionary.NCDictionaryEnricher
+import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.function.NCAverageEnricher
 import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.limit.NCLimitEnricher
 import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.model.NCModelEnricher
 import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.relation.NCRelationEnricher
@@ -47,7 +47,6 @@ import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.sort.NCSortEnricher
 import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.stopword.NCStopWordEnricher
 import org.apache.nlpcraft.probe.mgrs.nlp.enrichers.suspicious.NCSuspiciousNounsEnricher
 import org.apache.nlpcraft.probe.mgrs.nlp.validate.NCValidateManager
-
 import scala.collection.JavaConverters._
 import scala.compat.Platform.currentTime
 import scala.util.control.Exception.{catching, ignoring}
@@ -430,6 +429,7 @@ private [probe] object NCProbeBoot extends LazyLogging with NCOpenCensusTrace {
             NCLimitEnricher.start(span)
             NCSortEnricher.start(span)
             NCRelationEnricher.start(span)
+            NCAverageEnricher.start(span)
             NCSuspiciousNounsEnricher.start(span)
             NCValidateManager.start(span)
             NCDictionaryEnricher.start(span)
@@ -453,6 +453,7 @@ private [probe] object NCProbeBoot extends LazyLogging with NCOpenCensusTrace {
             NCDictionaryEnricher.stop(span)
             NCValidateManager.stop(span)
             NCSuspiciousNounsEnricher.stop(span)
+            NCAverageEnricher.stop(span)
             NCRelationEnricher.stop(span)
             NCSortEnricher.stop(span)
             NCLimitEnricher.stop(span)
