@@ -270,7 +270,7 @@ object NCQueryManager extends NCService with NCIgniteInstance with NCOpenCensusS
                     company,
                     mdlId,
                     txt0,
-                    NCServerEnrichmentManager.enrichPipeline(srvReqId, txt0, enabledBuiltInToks, mdl.mlData, span),
+                    NCServerEnrichmentManager.enrichPipeline(srvReqId, txt0, enabledBuiltInToks, mdl.mlConfig, span),
                     usrAgent,
                     rmtAddr,
                     data,

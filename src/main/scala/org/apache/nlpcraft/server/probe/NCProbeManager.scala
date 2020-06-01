@@ -36,11 +36,9 @@ import org.apache.nlpcraft.common.version.NCVersion
 import org.apache.nlpcraft.common.{NCService, _}
 import org.apache.nlpcraft.probe.mgrs.NCProbeMessage
 import org.apache.nlpcraft.server.company.NCCompanyManager
-import org.apache.nlpcraft.server.mdo.impl.{NCAnnotatedMdo, NCMdoField}
-import org.apache.nlpcraft.server.mdo.{NCCompanyMdo, NCProbeMdo, NCProbeModelMdo, NCProbeModelMlMdo, NCUserMdo}
+import org.apache.nlpcraft.server.mdo.{NCCompanyMdo, NCProbeMdo, NCProbeModelMdo, NCUserMdo}
 import org.apache.nlpcraft.server.ml.NCMlManager
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnrichmentManager
-import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 import org.apache.nlpcraft.server.proclog.NCProcessLogManager
 import org.apache.nlpcraft.server.query.NCQueryManager
 import org.apache.nlpcraft.server.sql.NCSql
@@ -630,7 +628,11 @@ object NCProbeManager extends NCService {
                                     name = m.name,
                                     version = m.version,
                                     enabledBuiltInTokens = m.enabledBuiltInTokens,
-                                    mlData = NCMlManager.prepareMlData(m.mlElements.toMap, m.examples)
+                                    mlConfig =
+                                        if (m.mlElements.nonEmpty)
+                                            Some(NCMlManager.makeModelConfig(m.mlElements.toMap, m.examples))
+                                        else
+                                            None
                                 )
                             )
 

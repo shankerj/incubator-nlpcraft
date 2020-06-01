@@ -19,7 +19,7 @@ package org.apache.nlpcraft.server.ml
 
 import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.{NCE, NCService}
-import org.apache.nlpcraft.server.mdo.NCProbeModelMlMdo
+import org.apache.nlpcraft.server.mdo.NCModelMlConfigMdo
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 
 /**
@@ -35,8 +35,8 @@ object NCMlManager extends NCService with NCOpenCensusServerStats {
     }
 
     @throws[NCE]
-    def prepareMlData(elems: Map[String, Set[String]], examples: Set[String]): NCProbeModelMlMdo = {
+    def makeModelConfig(elems: Map[String, Set[String]], examples: Set[String]): NCModelMlConfigMdo = {
         // TODO:
-        NCProbeModelMlMdo(elems, examples)
+        NCModelMlConfigMdo(elems, examples)
     }
 }

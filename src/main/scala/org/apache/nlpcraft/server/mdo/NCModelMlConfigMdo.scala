@@ -20,10 +20,10 @@ package org.apache.nlpcraft.server.mdo
 import org.apache.nlpcraft.server.mdo.impl._
 
 /**
-  * Probe model ML data  MDO.
+  * Probe model ML config MDO.
   */
 @NCMdoEntity(sql = false)
-case class NCProbeModelMlMdo(
+case class NCModelMlConfigMdo(
     @NCMdoField mlElements: Map[String, Set[String]],
     @NCMdoField examples: Set[String]
 )

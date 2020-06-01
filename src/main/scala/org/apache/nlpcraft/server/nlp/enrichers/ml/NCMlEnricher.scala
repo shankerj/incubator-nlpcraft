@@ -51,7 +51,7 @@ object NCMlEnricher extends NCServerEnricher {
     }
 
     override def enrich(ns: NCNlpSentence, parent: Span): Unit = {
-        val elem = ns.mlData.mlElements.head._1
+        val elem = ns.mlCfg.get.mlElements.head._1
         val tok = ns(1)
 
         tok.add(NCNlpSentenceNote(Seq(tok.index), elem))

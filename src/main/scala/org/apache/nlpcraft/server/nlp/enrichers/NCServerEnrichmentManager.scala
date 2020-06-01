@@ -25,7 +25,7 @@ import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote, NCNlpSe
 import org.apache.nlpcraft.common.{NCService, _}
 import org.apache.nlpcraft.server.ignite.NCIgniteHelpers._
 import org.apache.nlpcraft.server.ignite.NCIgniteInstance
-import org.apache.nlpcraft.server.mdo.NCProbeModelMlMdo
+import org.apache.nlpcraft.server.mdo.NCModelMlConfigMdo
 import org.apache.nlpcraft.server.nlp.core.{NCNlpNerEnricher, NCNlpServerManager}
 import org.apache.nlpcraft.server.nlp.enrichers.basenlp.NCBaseNlpEnricher
 import org.apache.nlpcraft.server.nlp.enrichers.coordinate.NCCoordinatesEnricher
@@ -92,7 +92,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
       * @param srvReqId Server request ID.
       * @param normTxt Normalized text.
       * @param enabledBuiltInToks Enabled built-in tokens.
-      * @param mlData ML model data holder ML enabled elements with synonyms.
+      * @param mlCfg ML model config holder. Optional.
       * @param parent Optional parent span.
       * @return
       */
@@ -100,11 +100,11 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
         srvReqId: String,
         normTxt: String,
         enabledBuiltInToks: Set[String],
-        mlData: NCProbeModelMlMdo,
+        mlCfg: Option[NCModelMlConfigMdo],
         parent: Span = null
     ): NCNlpSentence =
         startScopedSpan("process", parent, "srvReqId" → srvReqId, "txt" → normTxt) { span ⇒
-            val s = new NCNlpSentence(srvReqId, normTxt, 1, enabledBuiltInToks, mlData)
+            val s = new NCNlpSentence(srvReqId, normTxt, 1, enabledBuiltInToks, mlCfg)
 
             // Server-side enrichment pipeline.
             // NOTE: order of enrichers is IMPORTANT.
@@ -126,7 +126,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
                     NCCoordinatesEnricher.enrich(s, span)
             }
 
-            if (Config.supportMl && mlData.mlElements.nonEmpty)
+            if (Config.supportMl && mlCfg.nonEmpty)
                 NCMlEnricher.enrich(s, span)
 
             ner(s, enabledBuiltInToks)
@@ -142,7 +142,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
       * @param srvReqId Server request ID.
       * @param txt Input text.
       * @param enabledBuiltInToks Set of enabled built-in token IDs.
-      * @param mlData ML model data holder.
+      * @param mlCfg ML model config holder. Optional.
       * @param parent Optional parent span.
       */
     @throws[NCE]
@@ -150,7 +150,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
         srvReqId: String,
         txt: String,
         enabledBuiltInToks: Set[String],
-        mlData: NCProbeModelMlMdo,
+        mlCfg: Option[NCModelMlConfigMdo],
         parent: Span = null
     ): NCNlpSentence = {
         startScopedSpan("enrichPipeline", parent, "srvReqId" → srvReqId, "txt" → txt) { span ⇒
@@ -170,9 +170,9 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
                             h.sentence
                         }
                         else
-                            process(srvReqId, normTxt, enabledBuiltInToks, mlData, span)
+                            process(srvReqId, normTxt, enabledBuiltInToks, mlCfg, span)
                     case None ⇒
-                        process(srvReqId, normTxt, enabledBuiltInToks, mlData, span)
+                        process(srvReqId, normTxt, enabledBuiltInToks, mlCfg, span)
                 }
             }
         }
