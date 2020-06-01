@@ -20,21 +20,10 @@ package org.apache.nlpcraft.server.mdo
 import org.apache.nlpcraft.server.mdo.impl._
 
 /**
-  * Probe model MDO.
+  * Probe model ML data  MDO.
   */
 @NCMdoEntity(sql = false)
-case class NCProbeModelMdo(
-    @NCMdoField id: String,
-    @NCMdoField name: String,
-    @NCMdoField version: String,
-    @NCMdoField enabledBuiltInTokens: Set[String],
-    @NCMdoField mlData: NCProbeModelMlMdo
-) extends NCAnnotatedMdo[NCProbeModelMdo] {
-    override def hashCode(): Int = s"$id$name".hashCode()
-    
-    override def equals(obj: Any): Boolean =
-        obj match {
-            case x: NCProbeModelMdo ⇒ x.id == id
-            case _ ⇒ false
-        }
-}
+case class NCProbeModelMlMdo(
+    @NCMdoField mlElements: Map[String, Set[String]],
+    @NCMdoField examples: Set[String]
+)

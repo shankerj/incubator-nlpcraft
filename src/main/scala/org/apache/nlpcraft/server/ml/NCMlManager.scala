@@ -15,26 +15,28 @@
  * limitations under the License.
  */
 
-package org.apache.nlpcraft.server.mdo
+package org.apache.nlpcraft.server.ml
 
-import org.apache.nlpcraft.server.mdo.impl._
+import io.opencensus.trace.Span
+import org.apache.nlpcraft.common.{NCE, NCService}
+import org.apache.nlpcraft.server.mdo.NCProbeModelMlMdo
+import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 
 /**
-  * Probe model MDO.
+  * TODO:
   */
-@NCMdoEntity(sql = false)
-case class NCProbeModelMdo(
-    @NCMdoField id: String,
-    @NCMdoField name: String,
-    @NCMdoField version: String,
-    @NCMdoField enabledBuiltInTokens: Set[String],
-    @NCMdoField mlData: NCProbeModelMlMdo
-) extends NCAnnotatedMdo[NCProbeModelMdo] {
-    override def hashCode(): Int = s"$id$name".hashCode()
-    
-    override def equals(obj: Any): Boolean =
-        obj match {
-            case x: NCProbeModelMdo ⇒ x.id == id
-            case _ ⇒ false
-        }
+object NCMlManager extends NCService with NCOpenCensusServerStats {
+    override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
+        super.start()
+    }
+
+    override def stop(parent: Span = null): Unit = startScopedSpan("stop", parent) { _ ⇒
+        super.stop()
+    }
+
+    @throws[NCE]
+    def prepareMlData(elems: Map[String, Set[String]], examples: Set[String]): NCProbeModelMlMdo = {
+        // TODO:
+        NCProbeModelMlMdo(elems, examples)
+    }
 }

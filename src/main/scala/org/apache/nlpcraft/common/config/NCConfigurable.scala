@@ -247,6 +247,13 @@ trait NCConfigurable extends LazyLogging {
         if (!hocon.hasPath(name)) None else Some(hocon.getStringList(name).asScala)
 
     /**
+      * Gets flag.
+      *
+      * @param name Full configuration property path (name).
+      */
+    def hasProperty(name: String): Boolean = hocon.hasPath(name)
+
+    /**
       *
       * @param errMsgs Optional error messages.
       */

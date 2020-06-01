@@ -36,7 +36,6 @@ object NCNlpServerManager extends NCService {
         private final val prop = "nlpcraft.server.tokenProviders"
 
         def tokenProviders: Seq[String] = getStringList(prop)
-
         def support(name: String): Boolean = tokenProviders.contains(name)
     
         /**
@@ -48,6 +47,8 @@ object NCNlpServerManager extends NCService {
             if (unsupported.nonEmpty)
                 abortWith(s"Configuration '$prop' contains unsupported providers: ${unsupported.mkString(",")}")
         }
+
+
     }
 
     Config.check()

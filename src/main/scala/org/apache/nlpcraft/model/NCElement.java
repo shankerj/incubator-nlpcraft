@@ -327,4 +327,9 @@ public interface NCElement extends NCMetadata, Serializable {
     default NCValueLoader getValueLoader() {
         return null;
     }
+
+    // TODO:
+    default boolean mlSupport() {
+        return false;
+    }
 }

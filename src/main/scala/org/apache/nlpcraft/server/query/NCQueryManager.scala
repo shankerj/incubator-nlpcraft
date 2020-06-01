@@ -248,8 +248,9 @@ object NCQueryManager extends NCService with NCIgniteInstance with NCOpenCensusS
         
         Future {
             startScopedSpan("future", parent, "srvReqId" → srvReqId) { span ⇒
-                val enabledBuiltInToks = NCProbeManager.getModel(mdlId, span).enabledBuiltInTokens
-                
+                val mdl = NCProbeManager.getModel(mdlId, span)
+
+                val enabledBuiltInToks = mdl.enabledBuiltInTokens
                 val toksStr = enabledBuiltInToks.toSeq.
                     sortBy(t ⇒ (if (t.startsWith("nlpcraft:")) 0
                     else 1, t)).
@@ -257,7 +258,7 @@ object NCQueryManager extends NCService with NCIgniteInstance with NCOpenCensusS
                 
                 logger.info(s"New request received " +
                     s"[txt='$txt0'" +
-                    s", usr=${usr.firstName} ${usr.lastName} (${usr.email})" +
+                    s", usr=${usr.firstName.getOrElse("")} ${usr.lastName.getOrElse("")} (${usr.email.getOrElse("")})" +
                     s", mdlId=$mdlId" +
                     s", enabledBuiltInTokens=$toksStr" +
                     s"]")
@@ -269,7 +270,7 @@ object NCQueryManager extends NCService with NCIgniteInstance with NCOpenCensusS
                     company,
                     mdlId,
                     txt0,
-                    NCServerEnrichmentManager.enrichPipeline(srvReqId, txt0, enabledBuiltInToks),
+                    NCServerEnrichmentManager.enrichPipeline(srvReqId, txt0, enabledBuiltInToks, mdl.mlData, span),
                     usrAgent,
                     rmtAddr,
                     data,

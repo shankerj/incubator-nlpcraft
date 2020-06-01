@@ -35,6 +35,7 @@ import org.apache.nlpcraft.probe.mgrs.NCProbeMessage
 import org.apache.nlpcraft.probe.mgrs.cmd.NCCommandManager
 import org.apache.nlpcraft.probe.mgrs.model.NCModelManager
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 /**
@@ -234,7 +235,21 @@ object NCConnectionManager extends NCService {
 
                             // util.HashSet created to avoid scala collections serialization error.
                             // Seems to be a Scala bug.
-                            (mdl.getId, mdl.getName, mdl.getVersion, new util.HashSet[String](mdl.getEnabledBuiltInTokens))
+                            (
+                                mdl.getId,
+                                mdl.getName,
+                                mdl.getVersion,
+                                new util.HashSet[String](mdl.getEnabledBuiltInTokens),
+                                new util.HashMap[String, util.Set[String]](
+                                    mdl.getElements.asScala.filter(_.mlSupport()).
+                                        map(p ⇒
+                                            p.getId →
+                                                new util.HashSet[String](
+                                                    p.getSynonyms.asScala.toSet.filter(!_.contains(" ")).asJava)
+                                        ).toMap.asJava
+                                ),
+                                new util.HashSet[String](mdl.getExamples)
+                            )
                         })
                 ), cryptoKey)
     
@@ -247,6 +262,8 @@ object NCConnectionManager extends NCService {
                     case "S2P_PROBE_NOT_FOUND" ⇒ err("Probe failed to start due to unknown error.")
                     case "S2P_PROBE_VERSION_MISMATCH" ⇒ err(s"REST server does not support probe version: ${ver.version}")
                     case "S2P_PROBE_UNSUPPORTED_TOKENS_TYPES" ⇒ err(s"REST server does not support some model enabled tokes types.")
+                    case "S2P_PROBE_UNSUPPORTED_ML" ⇒ err(s"REST server does not support ML enabled elements.")
+                    case "S2P_PROBE_ML_ERROR" ⇒ err(s"REST server ML elements initialization error.")
                     case "S2P_PROBE_OK" ⇒ logger.trace("Uplink handshake OK.") // Bingo!
                     case _ ⇒ err(s"Unknown REST server message: ${resp.getType}")
                 }

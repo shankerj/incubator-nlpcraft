@@ -25,11 +25,13 @@ import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote, NCNlpSe
 import org.apache.nlpcraft.common.{NCService, _}
 import org.apache.nlpcraft.server.ignite.NCIgniteHelpers._
 import org.apache.nlpcraft.server.ignite.NCIgniteInstance
+import org.apache.nlpcraft.server.mdo.NCProbeModelMlMdo
 import org.apache.nlpcraft.server.nlp.core.{NCNlpNerEnricher, NCNlpServerManager}
 import org.apache.nlpcraft.server.nlp.enrichers.basenlp.NCBaseNlpEnricher
 import org.apache.nlpcraft.server.nlp.enrichers.coordinate.NCCoordinatesEnricher
 import org.apache.nlpcraft.server.nlp.enrichers.date.NCDateEnricher
 import org.apache.nlpcraft.server.nlp.enrichers.geo.NCGeoEnricher
+import org.apache.nlpcraft.server.nlp.enrichers.ml.NCMlEnricher
 import org.apache.nlpcraft.server.nlp.enrichers.numeric.NCNumericEnricher
 import org.apache.nlpcraft.server.nlp.enrichers.quote.NCQuoteEnricher
 import org.apache.nlpcraft.server.nlp.enrichers.stopword.NCStopWordEnricher
@@ -43,13 +45,15 @@ import scala.util.control.Exception.catching
   */
 object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
     private object Config extends NCConfigurable {
-        def supportNlpCraft: Boolean = getStringList("nlpcraft.server.tokenProviders").contains("nlpcraft")
+        lazy val supportNlpCraft: Boolean = getStringList("nlpcraft.server.tokenProviders").contains("nlpcraft")
+        lazy val supportMl: Boolean = hasProperty("nlpcraft.server.ml")
     }
 
     private final val CUSTOM_PREFIXES = Set("google:", "opennlp:", "stanford:", "spacy:")
 
     @volatile private var ners: Map[String, NCNlpNerEnricher] = _
     @volatile private var supportedProviders: Set[String] = _
+    @volatile private var supportMl: Boolean = true
 
     // NOTE: this cache is independent from datasource.
     @volatile private var cache: IgniteCache[String, Holder] = _
@@ -88,6 +92,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
       * @param srvReqId Server request ID.
       * @param normTxt Normalized text.
       * @param enabledBuiltInToks Enabled built-in tokens.
+      * @param mlData ML model data holder ML enabled elements with synonyms.
       * @param parent Optional parent span.
       * @return
       */
@@ -95,9 +100,11 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
         srvReqId: String,
         normTxt: String,
         enabledBuiltInToks: Set[String],
-        parent: Span = null): NCNlpSentence =
+        mlData: NCProbeModelMlMdo,
+        parent: Span = null
+    ): NCNlpSentence =
         startScopedSpan("process", parent, "srvReqId" → srvReqId, "txt" → normTxt) { span ⇒
-            val s = new NCNlpSentence(srvReqId, normTxt, 1, enabledBuiltInToks)
+            val s = new NCNlpSentence(srvReqId, normTxt, 1, enabledBuiltInToks, mlData)
 
             // Server-side enrichment pipeline.
             // NOTE: order of enrichers is IMPORTANT.
@@ -119,6 +126,9 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
                     NCCoordinatesEnricher.enrich(s, span)
             }
 
+            if (Config.supportMl && mlData.mlElements.nonEmpty)
+                NCMlEnricher.enrich(s, span)
+
             ner(s, enabledBuiltInToks)
 
             prepareAsciiTable(s).info(logger, Some(s"Sentence enriched: $normTxt"))
@@ -132,6 +142,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
       * @param srvReqId Server request ID.
       * @param txt Input text.
       * @param enabledBuiltInToks Set of enabled built-in token IDs.
+      * @param mlData ML model data holder.
       * @param parent Optional parent span.
       */
     @throws[NCE]
@@ -139,9 +150,11 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
         srvReqId: String,
         txt: String,
         enabledBuiltInToks: Set[String],
-        parent: Span = null): NCNlpSentence = {
+        mlData: NCProbeModelMlMdo,
+        parent: Span = null
+    ): NCNlpSentence = {
         startScopedSpan("enrichPipeline", parent, "srvReqId" → srvReqId, "txt" → txt) { span ⇒
-            val normTxt = NCPreProcessManager.normalize(txt, true, span)
+            val normTxt = NCPreProcessManager.normalize(txt, spellCheck = true, span)
 
             if (normTxt != txt)
                 logger.info(s"Sentence normalized to: $normTxt")
@@ -157,9 +170,9 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
                             h.sentence
                         }
                         else
-                            process(srvReqId, normTxt, enabledBuiltInToks, span)
+                            process(srvReqId, normTxt, enabledBuiltInToks, mlData, span)
                     case None ⇒
-                        process(srvReqId, normTxt, enabledBuiltInToks, span)
+                        process(srvReqId, normTxt, enabledBuiltInToks, mlData, span)
                 }
             }
         }
@@ -182,7 +195,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
             n.keySet
                 .filter(name ⇒ HEADERS.find(h ⇒ isType(typ, h._1)) match {
                     case Some((_, (_, names))) ⇒ names.contains(name)
-                    case None ⇒ false
+                    case None ⇒ name == "noteType"
                 })
                 .map(name ⇒
                     Header(
@@ -196,13 +209,12 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
                 )
         }
         
-        val headers = s.flatten.flatMap(mkNoteHeaders).distinct.sortBy(hdr ⇒ {
-            val x = HEADERS.
-                find(p ⇒ isType(hdr.noteType, p._1)).
-                getOrElse(throw new NCE(s"Header not found for: ${hdr.noteType}"))._2
-            
-            (x._1 * 100) + x._2.indexOf(hdr.noteName)
-        })
+        val headers = s.flatten.flatMap(mkNoteHeaders).distinct.sortBy(hdr ⇒
+            HEADERS.find(p ⇒ isType(hdr.noteType, p._1)) match {
+                case Some((_, (idx, names))) ⇒ idx * 100 + names.indexOf(hdr.noteName)
+                case None ⇒ Integer.MAX_VALUE
+            }
+        )
 
         val tbl = NCAsciiTable(headers.map(_.header): _*)
         
@@ -248,18 +260,25 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
         NCStopWordEnricher.start(span)
         NCQuoteEnricher.start(span)
 
+        // Following components can be started independently.
+        val ps = scala.collection.mutable.ArrayBuffer.empty[() ⇒ Any]
+
         if (Config.supportNlpCraft) {
-            // These component can be started independently.
-            U.executeParallel(
-                () ⇒ NCDateEnricher.start(span),
-                () ⇒ NCNumericEnricher.start(span),
-                () ⇒ NCGeoEnricher.start(span),
-                () ⇒ NCCoordinatesEnricher.start(span)
-            )
+            ps += (() ⇒ NCDateEnricher.start(span))
+            ps += (() ⇒ NCNumericEnricher.start(span))
+            ps += (() ⇒ NCGeoEnricher.start(span))
+            ps += (() ⇒ NCCoordinatesEnricher.start(span))
         }
+
+        if (Config.supportMl)
+            ps += (() ⇒ NCMlEnricher.start(span))
+
+        if (ps.nonEmpty)
+            U.executeParallel(ps :_*)
 
         ners = NCNlpServerManager.getNers
         supportedProviders = ners.keySet ++ (if (Config.supportNlpCraft) Set("nlpcraft") else Set.empty)
+        supportMl = Config.supportMl
 
         super.start()
     }
@@ -288,6 +307,11 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
       *
       * @return
       */
-    def getSupportedProviders: Set[String] =
-        supportedProviders
+    def getSupportedProviders: Set[String] = supportedProviders
+
+    /**
+      *
+      * @return
+      */
+    def supportMlServer: Boolean = supportMl
 }

@@ -302,6 +302,11 @@ abstract public class NCModelFileAdapter extends NCModelAdapter {
                             return syns;
                         }
 
+                        @Override
+                        public boolean mlSupport() {
+                            return js.isMlSupport();
+                        }
+
                         private NCValueLoader mkLoader(String clsName) {
                             NCValueLoader ldr = NCUtils.mkObject(clsName);
 

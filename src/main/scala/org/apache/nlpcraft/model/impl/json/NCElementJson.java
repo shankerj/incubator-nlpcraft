@@ -31,6 +31,7 @@ public class NCElementJson {
     private Map<String, Object> metadata = new HashMap<>();
     private NCValueJson[] values = new NCValueJson[0];
     private String valueLoader;
+    private boolean mlSupport;
 
     /**
      *
@@ -158,5 +159,21 @@ public class NCElementJson {
      */
     public void setValueLoader(String valueLoader) {
         this.valueLoader = valueLoader;
+    }
+
+    /**
+     *
+     * @return
+     */
+    public boolean isMlSupport() {
+        return mlSupport;
+    }
+
+    /**
+     *
+     * @param mlSupport
+     */
+    public void setMlSupport(boolean mlSupport) {
+        this.mlSupport = mlSupport;
     }
 }

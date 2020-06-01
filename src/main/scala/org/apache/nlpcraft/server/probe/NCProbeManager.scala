@@ -36,8 +36,11 @@ import org.apache.nlpcraft.common.version.NCVersion
 import org.apache.nlpcraft.common.{NCService, _}
 import org.apache.nlpcraft.probe.mgrs.NCProbeMessage
 import org.apache.nlpcraft.server.company.NCCompanyManager
-import org.apache.nlpcraft.server.mdo.{NCCompanyMdo, NCProbeMdo, NCProbeModelMdo, NCUserMdo}
+import org.apache.nlpcraft.server.mdo.impl.{NCAnnotatedMdo, NCMdoField}
+import org.apache.nlpcraft.server.mdo.{NCCompanyMdo, NCProbeMdo, NCProbeModelMdo, NCProbeModelMlMdo, NCUserMdo}
+import org.apache.nlpcraft.server.ml.NCMlManager
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnrichmentManager
+import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 import org.apache.nlpcraft.server.proclog.NCProcessLogManager
 import org.apache.nlpcraft.server.query.NCQueryManager
 import org.apache.nlpcraft.server.sql.NCSql
@@ -56,8 +59,8 @@ object NCProbeManager extends NCService {
     private[probe] object Config extends NCConfigurable {
         final private val pre = "nlpcraft.server.probe"
 
-        def getDnHostPort = getHostPort(s"$pre.links.downLink")
-        def getUpHostPort = getHostPort(s"$pre.links.upLink")
+        def getDnHostPort: (String, Integer) = getHostPort(s"$pre.links.downLink")
+        def getUpHostPort: (String, Integer) = getHostPort(s"$pre.links.upLink")
 
         def poolSize: Int = getInt(s"$pre.poolSize")
         def reconnectTimeoutMs: Long = getLong(s"$pre.reconnectTimeoutMs")
@@ -573,60 +576,105 @@ object NCProbeManager extends NCService {
             if (probeApiVer != srvApiVer.version)
                 respond("S2P_PROBE_VERSION_MISMATCH")
             else {
+                case class ProbeModel(
+                    id: String,
+                    name: String,
+                    version: String,
+                    enabledBuiltInTokens: Set[String],
+                    mlElements: Map[String, Set[String]],
+                    examples: Set[String]
+                )
+
                 val models =
-                    hsMsg.data[List[(String, String, String, java.util.Set[String])]]("PROBE_MODELS").
-                        map { case (mdlId, mdlName, mdlVer, enabledBuiltInToks) ⇒
-                            NCProbeModelMdo(
+                    hsMsg.data[List[(
+                        String,
+                        String,
+                        String,
+                        java.util.Set[String],
+                        java.util.Map[String, java.util.Set[String]],
+                        java.util.Set[String]
+                    )]]("PROBE_MODELS").
+                        map { case (
+                                mdlId,
+                                mdlName,
+                                mdlVer,
+                                enabledBuiltInToks,
+                                mlElements,
+                                examples
+                            ) ⇒
+                            ProbeModel(
                                 id = mdlId,
                                 name = mdlName,
                                 version = mdlVer,
-                                enabledBuiltInTokens = enabledBuiltInToks.asScala.toSet
+                                enabledBuiltInTokens = enabledBuiltInToks.asScala.toSet,
+                                mlElements = mlElements.asScala.map(p ⇒ p._1 → p._2.asScala.toSet).toMap,
+                                examples = examples.asScala.toSet
                             )
                         }.toSet
 
                 val probeTokTypes = models.flatMap(_.enabledBuiltInTokens).map(_.takeWhile(_ != ':'))
                 val tokProviders = NCServerEnrichmentManager.getSupportedProviders
 
-                if (probeTokTypes.exists(typ ⇒ !tokProviders.contains(typ)))
+                if (!NCServerEnrichmentManager.supportMlServer && models.exists(_.mlElements.nonEmpty))
+                    respond("S2P_PROBE_UNSUPPORTED_ML")
+                else if (probeTokTypes.exists(typ ⇒ !tokProviders.contains(typ)))
                     respond("S2P_PROBE_UNSUPPORTED_TOKENS_TYPES")
                 else {
                     val probeApiDate = hsMsg.data[java.time.LocalDate]("PROBE_API_DATE")
 
-                    val holder = ProbeHolder(
-                        probeKey,
-                        NCProbeMdo(
-                            probeToken = hsMsg.data[String]("PROBE_TOKEN"),
-                            probeId = hsMsg.data[String]("PROBE_ID"),
-                            probeGuid = probeGuid,
-                            probeApiVersion = probeApiVer,
-                            probeApiDate = java.sql.Date.valueOf(probeApiDate),
-                            osVersion = hsMsg.data[String]("PROBE_OS_VER"),
-                            osName = hsMsg.data[String]("PROBE_OS_NAME"),
-                            osArch = hsMsg.data[String]("PROBE_OS_ARCH"),
-                            startTstamp = new java.sql.Timestamp(hsMsg.data[Long]("PROBE_START_TSTAMP")),
-                            tmzId = hsMsg.data[String]("PROBE_TMZ_ID"),
-                            tmzAbbr = hsMsg.data[String]("PROBE_TMZ_ABBR"),
-                            tmzName = hsMsg.data[String]("PROBE_TMZ_NAME"),
-                            userName = hsMsg.data[String]("PROBE_SYS_USERNAME"),
-                            javaVersion = hsMsg.data[String]("PROBE_JAVA_VER"),
-                            javaVendor = hsMsg.data[String]("PROBE_JAVA_VENDOR"),
-                            hostName = hsMsg.data[String]("PROBE_HOST_NAME"),
-                            hostAddr = hsMsg.data[String]("PROBE_HOST_ADDR"),
-                            macAddr = hsMsg.dataOpt[String]("PROBE_HW_ADDR").getOrElse(""),
-                            models = models
-                        ),
-                        null, // No downlink socket yet.
-                        sock,
-                        null, // No downlink thread yet.
-                        cryptoKey
-                    )
+                    try {
+                        val probelModels =
+                            models.map(m ⇒
+                                NCProbeModelMdo(
+                                    id = m.id,
+                                    name = m.name,
+                                    version = m.version,
+                                    enabledBuiltInTokens = m.enabledBuiltInTokens,
+                                    mlData = NCMlManager.prepareMlData(m.mlElements.toMap, m.examples)
+                                )
+                            )
 
-                    pending.synchronized {
-                        pending += probeKey → holder
+                        val holder = ProbeHolder(
+                            probeKey,
+                            NCProbeMdo(
+                                probeToken = hsMsg.data[String]("PROBE_TOKEN"),
+                                probeId = hsMsg.data[String]("PROBE_ID"),
+                                probeGuid = probeGuid,
+                                probeApiVersion = probeApiVer,
+                                probeApiDate = java.sql.Date.valueOf(probeApiDate),
+                                osVersion = hsMsg.data[String]("PROBE_OS_VER"),
+                                osName = hsMsg.data[String]("PROBE_OS_NAME"),
+                                osArch = hsMsg.data[String]("PROBE_OS_ARCH"),
+                                startTstamp = new java.sql.Timestamp(hsMsg.data[Long]("PROBE_START_TSTAMP")),
+                                tmzId = hsMsg.data[String]("PROBE_TMZ_ID"),
+                                tmzAbbr = hsMsg.data[String]("PROBE_TMZ_ABBR"),
+                                tmzName = hsMsg.data[String]("PROBE_TMZ_NAME"),
+                                userName = hsMsg.data[String]("PROBE_SYS_USERNAME"),
+                                javaVersion = hsMsg.data[String]("PROBE_JAVA_VER"),
+                                javaVendor = hsMsg.data[String]("PROBE_JAVA_VENDOR"),
+                                hostName = hsMsg.data[String]("PROBE_HOST_NAME"),
+                                hostAddr = hsMsg.data[String]("PROBE_HOST_ADDR"),
+                                macAddr = hsMsg.dataOpt[String]("PROBE_HW_ADDR").getOrElse(""),
+                                models = probelModels
+                            ),
+                            null, // No downlink socket yet.
+                            sock,
+                            null, // No downlink thread yet.
+                            cryptoKey
+                        )
+
+                        pending.synchronized {
+                            pending += probeKey → holder
+                        }
+
+                        // Bingo!
+                        respond("S2P_PROBE_OK")
                     }
-
-                    // Bingo!
-                    respond("S2P_PROBE_OK")
+                    catch {
+                        case _: NCE ⇒
+                            // TODO: reason ?
+                            respond("S2P_PROBE_ML_ERROR")
+                    }
                 }
             }
         }
