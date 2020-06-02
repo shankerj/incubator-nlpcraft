@@ -324,7 +324,7 @@ object NCModelManager extends NCService with DecorateAsScala {
                 if (mdl.isPermutateSynonyms && !isElementId && chunks.forall(_.wordStem != null))
                     simplePermute(chunks).map(p ⇒ p.map(_.wordStem) → p).toMap.values.foreach(p ⇒ add(p, p == chunks))
                 else
-                    add(chunks, true)
+                    add(chunks, isDirect = true)
             }
 
             /**
@@ -345,7 +345,7 @@ object NCModelManager extends NCService with DecorateAsScala {
             // Add element ID as a synonyms (dups ignored).
             val idChunks = Seq(chunkIdSplit(elmId))
 
-            idChunks.distinct.foreach(ch ⇒ addSynonym(true, false, null, ch))
+            idChunks.distinct.foreach(ch ⇒ addSynonym(isElementId = true, isValueName = false, null, ch))
 
             // Add straight element synonyms (dups printed as warnings).
             val synsChunks = for (syn ← elm.getSynonyms.flatMap(parser.expand)) yield chunkSplit(syn)
@@ -358,7 +358,7 @@ object NCModelManager extends NCService with DecorateAsScala {
                     s"]"
                 )
 
-            synsChunks.distinct.foreach(ch ⇒ addSynonym(false, false, null, ch))
+            synsChunks.distinct.foreach(ch ⇒ addSynonym(isElementId = false, isValueName = false, value = null, chunks = ch))
 
             val vals =
                 (if (elm.getValues != null) elm.getValues.asScala else Seq.empty) ++
@@ -382,7 +382,7 @@ object NCModelManager extends NCService with DecorateAsScala {
                 val idChunks = Seq(chunkIdSplit(valId))
 
                 // Add value name as a synonyms (dups ignored)
-                idChunks.distinct.foreach(ch ⇒ addSynonym(false, true, valId, ch))
+                idChunks.distinct.foreach(ch ⇒ addSynonym(isElementId = false, isValueName = true, valId, ch))
 
                 // Add straight value synonyms (dups printed as warnings)
                 var skippedOneLikeName = false
@@ -409,7 +409,7 @@ object NCModelManager extends NCService with DecorateAsScala {
                         s"]"
                     )
 
-                chunks.distinct.foreach(ch ⇒ addSynonym(false, false, valId, ch))
+                chunks.distinct.foreach(ch ⇒ addSynonym(isElementId = false, isValueName = false, valId, ch))
             }
         }
         
@@ -483,6 +483,8 @@ object NCModelManager extends NCService with DecorateAsScala {
             logger.warn(s"Found duplicate synonyms - check trace logging for model: ${mdl.getId}")
             logger.warn(s"Duplicates are allowed by '${mdl.getId}' model but large number may degrade the performance.")
         }
+
+        checkMl(mdl, syns.toSet)
     
         mdl.getMetadata.put(MDL_META_ALL_ALIASES_KEY, allAliases.toSet)
         mdl.getMetadata.put(MDL_META_ALL_ELM_IDS_KEY,
@@ -621,6 +623,37 @@ object NCModelManager extends NCService with DecorateAsScala {
                 while (parentId != null)
             }
         }
+
+    /**
+      *
+      * @param mdl Model.
+      * @param syns Synonyms.
+      */
+    @throws[NCE]
+    private def checkMl(mdl: NCModel, syns: Set[SynonymHolder]): Unit = {
+        val mlElements = mdl.getElements.asScala.filter(_.mlSupport())
+
+        if (mlElements.nonEmpty) {
+            val examples =
+                mdl.getExamples.asScala.map(s ⇒ NCNlpCoreManager.tokenize(s).map(t ⇒ NCNlpCoreManager.stemWord(t.token)))
+
+            println("examples="+examples)
+
+            mlElements.foreach(e ⇒ {
+                val elemSyns = syns.flatMap(p ⇒
+                    if (p.elementId == e.getId && p.synonym.size == 1 && p.synonym.isTextOnly) Some(p.synonym) else None
+                )
+
+                println("elemSyns="+elemSyns)
+
+                if (elemSyns.isEmpty)
+                    throw new NCE(s"Text single word synonyms not found for ML element '${e.getId}'")
+
+                if (!elemSyns.exists(s ⇒ examples.exists(_.contains(s.stems))))
+                    throw new NCE(s"Examples not found for ML element '${e.getId}'")
+            })
+        }
+    }
 
     /**
       *

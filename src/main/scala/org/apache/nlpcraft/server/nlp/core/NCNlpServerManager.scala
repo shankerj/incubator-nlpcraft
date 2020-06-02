@@ -47,8 +47,6 @@ object NCNlpServerManager extends NCService {
             if (unsupported.nonEmpty)
                 abortWith(s"Configuration '$prop' contains unsupported providers: ${unsupported.mkString(",")}")
         }
-
-
     }
 
     Config.check()

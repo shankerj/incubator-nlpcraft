@@ -125,10 +125,10 @@ object NCServer extends App with NCIgniteInstance with LazyLogging with NCOpenCe
                 () ⇒ NCProbeManager.start(span),
                 () ⇒ NCFeedbackManager.start(span)
             )
-            
+
+            NCMlManager.start(span)
             NCQueryManager.start(span)
             NCRestManager.start(span)
-            NCMlManager.start(span)
     
             // Lifecycle callback.
             NCServerLifecycleManager.afterStart()
@@ -144,9 +144,9 @@ object NCServer extends App with NCIgniteInstance with LazyLogging with NCOpenCe
     
         startScopedSpan("stopManagers") { span ⇒
             Seq(
-                NCMlManager,
                 NCRestManager,
                 NCQueryManager,
+                NCMlManager,
                 NCFeedbackManager,
                 NCCompanyManager,
                 NCUserManager,

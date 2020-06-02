@@ -15,21 +15,11 @@
  * limitations under the License.
  */
 
-package org.apache.nlpcraft.server.mdo
-
-import org.apache.nlpcraft.server.mdo.impl._
-
-@NCMdoEntity(sql = false)
-case class NCElementSynonymMlMdo(
-    @NCMdoField word: String,
-    @NCMdoField score: Double
-)
+package org.apache.nlpcraft.server.ml
 
 /**
-  * Probe model ML config MDO.
+  *
+  * @param word
+  * @param score
   */
-@NCMdoEntity(sql = false)
-case class NCModelMlConfigMdo(
-    @NCMdoField mlElements: Map[String, Seq[NCElementSynonymMlMdo]],
-    @NCMdoField examples: Map[String, Map[Seq[String], Int]]
-)
+case class NCMlSuggestion(word: String, score: Double)

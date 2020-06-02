@@ -233,6 +233,7 @@ object NCConnectionManager extends NCService {
                         NCModelManager.getAllModels().map(m ⇒ {
                             val mdl = m.model
 
+
                             // util.HashSet created to avoid scala collections serialization error.
                             // Seems to be a Scala bug.
                             (
@@ -241,12 +242,16 @@ object NCConnectionManager extends NCService {
                                 mdl.getVersion,
                                 new util.HashSet[String](mdl.getEnabledBuiltInTokens),
                                 new util.HashMap[String, util.Set[String]](
-                                    mdl.getElements.asScala.filter(_.mlSupport()).
-                                        map(p ⇒
-                                            p.getId →
-                                                new util.HashSet[String](
-                                                    p.getSynonyms.asScala.toSet.filter(!_.contains(" ")).asJava)
-                                        ).toMap.asJava
+                                    mdl.getElements.asScala.filter(_.mlSupport()).map(e ⇒ {
+                                        // Gets single word text synonyms, its existing should be already validated.
+                                        val syns = m.synonyms(e.getId)(1).filter(_.isTextOnly)
+
+                                        require(syns.nonEmpty)
+
+                                        val stems: util.Set[String] = new util.HashSet[String](syns.map(_.stems).asJava)
+
+                                        e.getId → stems
+                                    }).toMap.asJava
                                 ),
                                 new util.HashSet[String](mdl.getExamples)
                             )

@@ -364,7 +364,9 @@ object NCProbeManager extends NCService {
 
                                     case Failure(e: NCE) ⇒ logger.warn(e.getMessage, e)
                                     case Failure(_: EOFException) ⇒ () // Just ignoring.
-                                    case Failure(e: Throwable) ⇒ logger.warn(s"Ignoring socket error: ${e.getLocalizedMessage}")
+                                    case Failure(e: Throwable) ⇒
+                                        e.printStackTrace()
+                                        logger.warn(s"Ignoring socket error: ${e.getLocalizedMessage}")
                                 }
                             }
                         }
@@ -673,7 +675,8 @@ object NCProbeManager extends NCService {
                         respond("S2P_PROBE_OK")
                     }
                     catch {
-                        case _: NCE ⇒
+                        case e: NCE ⇒
+                            logger.error("Errors during ML initialization for probe", e)
                             // TODO: reason ?
                             respond("S2P_PROBE_ML_ERROR")
                     }

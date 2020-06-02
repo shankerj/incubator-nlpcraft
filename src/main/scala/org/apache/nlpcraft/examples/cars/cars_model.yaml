@@ -20,14 +20,14 @@ name: "Cars Example Model"
 version: "1.0"
 description: "Cars example model."
 examples:
-  - "I like drive my new BMW."
+  - "I like drive my new BMW ."
+  - "BMW has the best engine ."
 enabledBuiltInTokens: [] # Don't use any built-in tokens.
 elements:
   - id: "cars:brand"
     description: "Any car"
     synonyms:
       - "BMW"
-      - "Mercedez"
     mlSupport: true
 intents:
   - "intent=brand term(brand)={id == 'cars:brand'}"
