@@ -22,7 +22,7 @@ import java.util.Collections
 
 import org.apache.nlpcraft.common.NCE
 import org.apache.nlpcraft.common.nlp.pos.NCPennTreebank
-import org.apache.nlpcraft.server.mdo.NCModelMlConfigMdo
+import org.apache.nlpcraft.server.mdo.NCMlConfigMdo
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -456,7 +456,7 @@ class NCNlpSentence(
     val text: String,
     val weight: Double,
     val enabledBuiltInToks: Set[String],
-    val mlCfg: Option[NCModelMlConfigMdo],
+    val mlCfg: Option[NCMlConfigMdo],
     override val tokens: ArrayBuffer[NCNlpSentenceToken] = new ArrayBuffer[NCNlpSentenceToken](32)
 ) extends NCNlpSentenceTokenBuffer(tokens) with java.io.Serializable {
     @transient

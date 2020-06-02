@@ -21,6 +21,7 @@ import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.NCService
 import org.apache.nlpcraft.common.config.NCConfigurable
 import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote}
+import org.apache.nlpcraft.server.mdo.NCProbableSynonymMdo
 import org.apache.nlpcraft.server.ml.NCMlManager
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 
@@ -54,9 +55,14 @@ object NCMlEnricher extends NCServerEnricher {
     private def substitute(words: Seq[String], idx: Int, repl: String): String =
         words.zipWithIndex.map { case (w, i) ⇒ if (idx == i) repl else w }.mkString(" ")
 
+    private def intersect(suggs: Seq[NCProbableSynonymMdo], syns: Seq[NCProbableSynonymMdo]): Boolean =
+        suggs.exists(sug ⇒ syns.exists(syn ⇒ syn.word == sug.word))
+
+
     override def enrich(ns: NCNlpSentence, parent: Span): Unit = {
         ns.mlCfg match {
             case Some(cfg) ⇒
+                // TODO: other names.
                 val nn = ns.filter(_.pos.startsWith("N"))
 
                 if (nn.nonEmpty) {
@@ -65,11 +71,11 @@ object NCMlEnricher extends NCServerEnricher {
                     nn.foreach(n ⇒ {
                         val idx = ns.indexOf(n)
 
-                        val sugg = NCMlManager.ask(normTxt, idx).filter(_.score > 0.5) // TODO:
+                        val sugg = NCMlManager.ask(normTxt, idx, 0.5, 10) // TODO:
 
                         logger.info(s"Suggestions for main sentence [text=$normTxt, nn=${n.origText}, suggestions=${sugg.mkString(",")}]")
 
-                        cfg.mlElements.find(e ⇒ e._2.exists(w ⇒ sugg.exists(s ⇒ s.word == w.word))) match {
+                        cfg.mlElements.find { case (_, syns) ⇒ intersect(sugg, syns) } match {
                             case Some((elemId, _)) ⇒ Some((idx, elemId))
                             case None ⇒
                                 cfg.examples.foreach { case (elemId, elemExamples) ⇒
@@ -78,9 +84,10 @@ object NCMlEnricher extends NCServerEnricher {
                                     val all =
                                         elemExamples.forall { case (example, idx) ⇒
                                             val subs = substitute(example, idx, n.origText)
-                                            val suggs = NCMlManager.ask(subs, idx).filter(_.score > 0.5) // TODO:
-                                            val el = cfg.mlElements(elemId)
-                                            val ok = suggs.exists(s ⇒ el.exists(e ⇒ e.word == s.word))
+                                            val suggs = NCMlManager.ask(subs, idx, 0.5, 10)
+
+                                            // TODO:
+                                            val ok = intersect(suggs, cfg.mlElements(elemId))
 
                                             logger.info(s"Suggestions for examples [subs=$subs, i=$idx, nn=${n.origText}, suggestions=${suggs.mkString(",")}, ok=$ok]")
 

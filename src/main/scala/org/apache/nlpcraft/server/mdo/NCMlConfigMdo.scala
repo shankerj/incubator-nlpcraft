@@ -19,17 +19,11 @@ package org.apache.nlpcraft.server.mdo
 
 import org.apache.nlpcraft.server.mdo.impl._
 
-@NCMdoEntity(sql = false)
-case class NCElementSynonymMlMdo(
-    @NCMdoField word: String,
-    @NCMdoField score: Double
-)
-
 /**
   * Probe model ML config MDO.
   */
 @NCMdoEntity(sql = false)
-case class NCModelMlConfigMdo(
-    @NCMdoField mlElements: Map[String, Seq[NCElementSynonymMlMdo]],
+case class NCMlConfigMdo(
+    @NCMdoField mlElements: Map[String, Seq[NCProbableSynonymMdo]],
     @NCMdoField examples: Map[String, Map[Seq[String], Int]]
 )

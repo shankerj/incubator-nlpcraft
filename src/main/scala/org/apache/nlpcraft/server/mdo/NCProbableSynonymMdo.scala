@@ -15,11 +15,15 @@
  * limitations under the License.
  */
 
-package org.apache.nlpcraft.server.ml
+package org.apache.nlpcraft.server.mdo
+
+import org.apache.nlpcraft.server.mdo.impl.{NCMdoEntity, NCMdoField}
 
 /**
-  *
-  * @param word
-  * @param score
+  * Probe element probable synonym MDO.
   */
-case class NCMlSuggestion(word: String, score: Double)
+@NCMdoEntity(sql = false)
+case class NCProbableSynonymMdo(
+    @NCMdoField word: String,
+    @NCMdoField score: Double
+)

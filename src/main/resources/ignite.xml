@@ -118,8 +118,16 @@
         <property name="expiryPolicyFactory" ref="fiveMinsPolicy"/>
     </bean>
 
+
     <bean name="opennlp-cache" class="org.apache.ignite.configuration.CacheConfiguration">
         <property name="name" value="opennlp-cache"/>
+        <property name="cacheMode" value="REPLICATED"/>
+        <property name="atomicityMode" value="TRANSACTIONAL"/>
+        <property name="expiryPolicyFactory" ref="fiveMinsPolicy"/>
+    </bean>
+
+    <bean name="ml-cache" class="org.apache.ignite.configuration.CacheConfiguration">
+        <property name="name" value="ml-cache"/>
         <property name="cacheMode" value="REPLICATED"/>
         <property name="atomicityMode" value="TRANSACTIONAL"/>
         <property name="expiryPolicyFactory" ref="fiveMinsPolicy"/>
@@ -195,6 +203,7 @@
                 <ref bean="sentence-cache"/>
                 <ref bean="stanford-cache"/>
                 <ref bean="opennlp-cache"/>
+                <ref bean="ml-cache"/>
             </list>
         </property>
     </bean>

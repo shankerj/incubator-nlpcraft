@@ -623,7 +623,7 @@ object NCProbeManager extends NCService {
                     val probeApiDate = hsMsg.data[java.time.LocalDate]("PROBE_API_DATE")
 
                     try {
-                        val probelModels =
+                        val probeModels =
                             models.map(m ⇒
                                 NCProbeModelMdo(
                                     id = m.id,
@@ -659,7 +659,7 @@ object NCProbeManager extends NCService {
                                 hostName = hsMsg.data[String]("PROBE_HOST_NAME"),
                                 hostAddr = hsMsg.data[String]("PROBE_HOST_ADDR"),
                                 macAddr = hsMsg.dataOpt[String]("PROBE_HW_ADDR").getOrElse(""),
-                                models = probelModels
+                                models = probeModels
                             ),
                             null, // No downlink socket yet.
                             sock,
