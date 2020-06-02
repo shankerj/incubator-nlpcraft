@@ -24,6 +24,6 @@ import org.apache.nlpcraft.server.mdo.impl._
   */
 @NCMdoEntity(sql = false)
 case class NCMlConfigMdo(
-    @NCMdoField mlElements: Map[String, Seq[NCProbableSynonymMdo]],
+    @NCMdoField mlElements: Map[String, Map[NCProbableSynonymMdo, Boolean]],
     @NCMdoField examples: Map[String, Map[Seq[String], Int]]
 )

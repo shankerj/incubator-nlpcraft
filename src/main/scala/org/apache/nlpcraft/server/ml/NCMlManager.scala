@@ -129,19 +129,19 @@ object NCMlManager extends NCService with NCOpenCensusServerStats with NCIgniteI
     }
 
     @throws[NCE]
-    def makeModelConfig(mlElems: Map[String, Set[String]], examples: Set[String]): NCMlConfigMdo = {
+    def makeModelConfig(mlElems: Map[String, Map[String, Boolean]], examples: Set[String]): NCMlConfigMdo = {
         val parsedExamples: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
 
         val examplesCfg = scala.collection.mutable.HashMap.empty[String, Map[Seq[String], Int]]
 
         val mlElementsData =
-            mlElems.map { case (elemId, synsStems) ⇒
-                val elemExamples = parsedExamples.filter(_.exists(e ⇒ synsStems.contains(e.stem)))
+            mlElems.map { case (elemId, syns) ⇒
+                val elemExamples = parsedExamples.filter(_.exists(e ⇒ syns.keySet.contains(e.stem)))
 
                 if (elemExamples.isEmpty)
                     throw new NCE(s"Examples not found for element: $elemId")
 
-                case class Holder(synomym: NCProbableSynonymMdo, words: Seq[String], index: Int)
+                case class Holder(synomym: NCProbableSynonymMdo, isValue: Boolean, words: Seq[String], index: Int)
 
                 val hs =
                     elemExamples.flatMap(elemExample ⇒ {
@@ -149,20 +149,23 @@ object NCMlManager extends NCService with NCOpenCensusServerStats with NCIgniteI
                         val normTxt = elemExample.map(_.normalWord).mkString(" ")
 
                         elemExample.
-                            filter(e ⇒ synsStems.contains(e.stem)).
-                            flatMap(n ⇒ {
-                                val i = elemExample.indexOf(n)
-                                val suggs = ask(normTxt, i, 0, 5) // TODO:
+                            flatMap(word ⇒
+                                syns.get(word.normalWord) match {
+                                    case Some(isValue) ⇒
+                                        val i = elemExample.indexOf(word)
+                                        val suggs = ask(normTxt, i, 0, 5) // TODO:
 
-                                suggs.map(s ⇒ Holder(NCProbableSynonymMdo(s.word, s.score),words, i))
-                            })
+                                        suggs.map(s ⇒ Holder(NCProbableSynonymMdo(s.word, s.score), isValue, words, i))
+                                    case None ⇒ Seq.empty
+                                }
+                            )
                     })
                         //filter(_.synomym.word.forall(_.isLower)). // TODO: nouns
 
                 examplesCfg += elemId → hs.map(h ⇒ h.words → h.index).toMap
 
-                elemId → hs.map(_.synomym).toSeq.sortBy(-_.score)
-            }
+                elemId → hs.map(h ⇒ h.synomym → h.isValue)
+            }.toMap
 
         val cfg = NCMlConfigMdo(mlElementsData, examplesCfg.toMap)
 

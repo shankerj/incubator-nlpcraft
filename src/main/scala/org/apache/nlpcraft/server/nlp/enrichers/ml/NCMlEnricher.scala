@@ -55,8 +55,13 @@ object NCMlEnricher extends NCServerEnricher {
     private def substitute(words: Seq[String], idx: Int, repl: String): String =
         words.zipWithIndex.map { case (w, i) ⇒ if (idx == i) repl else w }.mkString(" ")
 
-    private def intersect(suggs: Seq[NCProbableSynonymMdo], syns: Seq[NCProbableSynonymMdo]): Boolean =
-        suggs.exists(sug ⇒ syns.exists(syn ⇒ syn.word == sug.word))
+    private def intersect(suggs: Seq[NCProbableSynonymMdo], syns: Map[NCProbableSynonymMdo, Boolean]): Option[Boolean] =
+        suggs.flatMap(sug ⇒
+            syns.flatMap {
+                case (syn, isVal) ⇒
+                    if (syn.word == sug.word) Some(isVal) else None
+            }.toStream.headOption
+        ).toStream.headOption
 
 
     override def enrich(ns: NCNlpSentence, parent: Span): Unit = {
@@ -75,8 +80,19 @@ object NCMlEnricher extends NCServerEnricher {
 
                         logger.info(s"Suggestions for main sentence [text=$normTxt, nn=${n.origText}, suggestions=${sugg.mkString(",")}]")
 
-                        cfg.mlElements.find { case (_, syns) ⇒ intersect(sugg, syns) } match {
-                            case Some((elemId, _)) ⇒ Some((idx, elemId))
+                        cfg.mlElements.flatMap { case (elemId, syns) ⇒
+                            intersect(sugg, syns) match {
+                                case Some(isVal) ⇒ Some(elemId, isVal)
+                                case None ⇒ None
+                            }
+                        }.toStream.headOption match {
+                            case Some((elemId, isVal)) ⇒
+                                val tok = ns(idx)
+
+                                // TODO: value,
+                                tok.add(NCNlpSentenceNote(Seq(tok.index), elemId))
+
+
                             case None ⇒
                                 cfg.examples.foreach { case (elemId, elemExamples) ⇒
                                     println("elemId="+elemId)
@@ -86,8 +102,8 @@ object NCMlEnricher extends NCServerEnricher {
                                             val subs = substitute(example, idx, n.origText)
                                             val suggs = NCMlManager.ask(subs, idx, 0.5, 10)
 
-                                            // TODO:
-                                            val ok = intersect(suggs, cfg.mlElements(elemId))
+                                            // TODO: value
+                                            val ok = intersect(suggs, cfg.mlElements(elemId)).getOrElse(false)
 
                                             logger.info(s"Suggestions for examples [subs=$subs, i=$idx, nn=${n.origText}, suggestions=${suggs.mkString(",")}, ok=$ok]")
 

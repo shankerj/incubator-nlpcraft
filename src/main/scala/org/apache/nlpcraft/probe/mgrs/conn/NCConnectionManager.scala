@@ -241,14 +241,17 @@ object NCConnectionManager extends NCService {
                                 mdl.getName,
                                 mdl.getVersion,
                                 new util.HashSet[String](mdl.getEnabledBuiltInTokens),
-                                new util.HashMap[String, util.Set[String]](
+                                new util.HashMap[String, util.Map[String, Boolean]](
                                     mdl.getElements.asScala.filter(_.mlSupport()).map(e ⇒ {
                                         // Gets single word text synonyms, its existing should be already validated.
                                         val syns = m.synonyms(e.getId)(1).filter(_.isTextOnly)
 
                                         require(syns.nonEmpty)
 
-                                        val stems: util.Set[String] = new util.HashSet[String](syns.map(_.stems).asJava)
+                                        val stems: util.Map[String, Boolean] =
+                                            new util.HashMap[String, Boolean](
+                                                syns.map(s ⇒ s.stems → s.isValueSynonym).toMap.asJava
+                                            )
 
                                         e.getId → stems
                                     }).toMap.asJava

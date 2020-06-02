@@ -581,7 +581,7 @@ object NCProbeManager extends NCService {
                     name: String,
                     version: String,
                     enabledBuiltInTokens: Set[String],
-                    mlElements: Map[String, Set[String]],
+                    mlElements: Map[String, Map[String, Boolean]],
                     examples: Set[String]
                 )
 
@@ -591,7 +591,7 @@ object NCProbeManager extends NCService {
                         String,
                         String,
                         java.util.Set[String],
-                        java.util.Map[String, java.util.Set[String]],
+                        java.util.Map[String, java.util.Map[String, Boolean]],
                         java.util.Set[String]
                     )]]("PROBE_MODELS").
                         map { case (
@@ -607,7 +607,7 @@ object NCProbeManager extends NCService {
                                 name = mdlName,
                                 version = mdlVer,
                                 enabledBuiltInTokens = enabledBuiltInToks.asScala.toSet,
-                                mlElements = mlElements.asScala.map(p ⇒ p._1 → p._2.asScala.toSet).toMap,
+                                mlElements = mlElements.asScala.map(p ⇒ p._1 → p._2.asScala).toMap,
                                 examples = examples.asScala.toSet
                             )
                         }.toSet
