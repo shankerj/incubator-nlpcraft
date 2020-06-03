@@ -21,7 +21,6 @@ import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.NCService
 import org.apache.nlpcraft.common.config.NCConfigurable
 import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote}
-import org.apache.nlpcraft.server.mdo.NCProbableSynonymMdo
 import org.apache.nlpcraft.server.ml.NCMlManager
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 
@@ -55,13 +54,22 @@ object NCMlEnricher extends NCServerEnricher {
     private def substitute(words: Seq[String], idx: Int, repl: String): String =
         words.zipWithIndex.map { case (w, i) ⇒ if (idx == i) repl else w }.mkString(" ")
 
-    private def intersect(suggs: Seq[NCProbableSynonymMdo], syns: Map[NCProbableSynonymMdo, Boolean]): Option[Boolean] =
-        suggs.flatMap(sug ⇒
-            syns.flatMap {
-                case (syn, isVal) ⇒
-                    if (syn.word == sug.word) Some(isVal) else None
-            }.toStream.headOption
-        ).toStream.headOption
+    private def mark(ns: NCNlpSentence, idx: Int, elemId: String, valueOpt: Option[String]): Unit = {
+        val tok = ns(idx)
+
+        val note =
+            valueOpt match {
+                case Some(value) ⇒ NCNlpSentenceNote(Seq(tok.index), elemId, "value" → value)
+                case None ⇒ NCNlpSentenceNote(Seq(tok.index), elemId)
+            }
+
+        tok.add(note)
+    }
+
+//    private def intersect(suggs: Seq[NCMlSynonymInfoMdo], syns: Seq[NCProbableSynonym]): Option[String] =
+//        suggs.flatMap(
+//            sug ⇒ syns.flatMap(syn ⇒ if (syn.word == sug.word) syn.value else None).toStream.headOption
+//        ).toStream.headOption
 
 
     override def enrich(ns: NCNlpSentence, parent: Span): Unit = {
@@ -74,52 +82,89 @@ object NCMlEnricher extends NCServerEnricher {
                     val normTxt = ns.map(_.origText).mkString(" ")
 
                     nn.foreach(n ⇒ {
-                        val idx = ns.indexOf(n)
+                        val nIdx = ns.indexOf(n)
 
-                        val sugg = NCMlManager.ask(normTxt, idx, 0.5, 10) // TODO:
+                        val suggs = NCMlManager.suggest(normTxt, nIdx, 0.5, 10) // TODO:
 
-                        logger.info(s"Suggestions for main sentence [text=$normTxt, nn=${n.origText}, suggestions=${sugg.mkString(",")}]")
+                        logger.info(s"Suggestions for main sentence [text=$normTxt, nn=${n.origText}, suggestions=${suggs.mkString(",")}]")
 
-                        cfg.mlElements.flatMap { case (elemId, syns) ⇒
-                            intersect(sugg, syns) match {
-                                case Some(isVal) ⇒ Some(elemId, isVal)
-                                case None ⇒ None
-                            }
-                        }.toStream.headOption match {
-                            case Some((elemId, isVal)) ⇒
-                                val tok = ns(idx)
-
-                                // TODO: value,
-                                tok.add(NCNlpSentenceNote(Seq(tok.index), elemId))
-
-
-                            case None ⇒
-                                cfg.examples.foreach { case (elemId, elemExamples) ⇒
-                                    println("elemId="+elemId)
-                                    println("elemExamples="+elemExamples)
-                                    val all =
-                                        elemExamples.forall { case (example, idx) ⇒
-                                            val subs = substitute(example, idx, n.origText)
-                                            val suggs = NCMlManager.ask(subs, idx, 0.5, 10)
-
-                                            // TODO: value
-                                            val ok = intersect(suggs, cfg.mlElements(elemId)).getOrElse(false)
-
-                                            logger.info(s"Suggestions for examples [subs=$subs, i=$idx, nn=${n.origText}, suggestions=${suggs.mkString(",")}, ok=$ok]")
-
-                                            ok
-                                        }
-
-                                    if (all) {
-                                        val tok = ns(idx)
-
-                                        tok.add(NCNlpSentenceNote(Seq(tok.index), elemId))
-                                    }
-                                }
-                        }
+//                        cfg.synonyms.foreach { case (elemId, syns) ⇒
+//                            var found = false
+//
+//                            for ((synStem, info) ← syns if !found)
+//                                if (synStem == n.stem || suggs.exists(_.stem == n.stem)) {
+//                                    mark(ns, nIdx, elemId, info.value)
+//
+//                                    found = true
+//                                }
+//
+//                            if (!found) {
+//                                val elemExamples = cfg.examples(elemId)
+//
+//                                case class Holder(stem: String, score: Double, value: Option[String])
+//
+//                                val allExData =
+//                                    elemExamples.map { case (exampleToks, substIdx) ⇒
+//                                        val subs = substitute(exampleToks, substIdx, n.origText)
+//                                        val suggs = NCMlManager.suggest(subs, substIdx, 0.5, 10)
+//
+//                                        syns.
+//                                            filter { case (synStem, _) ⇒ suggs.exists(_.stem == synStem) }.
+//                                            map { case (synStem, info) ⇒
+//                                                Holder(stem = synStem, score = info.score, value = info.value)
+//                                            }.toSeq
+//                                    }.toSeq.flatten.groupBy(p ⇒ p)
+//
+//                                allExData.find { case (_, hs) ⇒ hs.size == elemExamples.size } match {
+//                                    case Some((h, _)) ⇒ mark(ns, n)
+//                                    case None ⇒ // No-op.
+//                                }
+//                            }
+//
+//
+//                            syns.foreach { case (stem, info) ⇒
+//                            }
+//                        }
+//
+//                        cfg.mlElements.flatMap { case (elemId, syns) ⇒
+//                            intersect(sugg, syns) match {
+//                                case Some(v) ⇒ Some(elemId, v)
+//                                case None ⇒ None
+//                            }
+//                        }.toStream.headOption match {
+//                            case Some((elemId, v)) ⇒
+//                                val tok = ns(idx)
+//
+//                                // TODO: value,
+//                                tok.add(NCNlpSentenceNote(Seq(tok.index), elemId))
+//
+//
+//                            case None ⇒
+//                                cfg.examples.foreach { case (elemId, elemExamples) ⇒
+//                                    println("elemId="+elemId)
+//                                    println("elemExamples="+elemExamples)
+//                                    val all =
+//                                        elemExamples.forall { case (example, idx) ⇒
+//                                            val subs = substitute(example, idx, n.origText)
+//                                            val suggs = NCMlManager.ask(subs, idx, 0.5, 10)
+//
+//                                            // TODO: value
+//                                            val ok = intersect(suggs, cfg.mlElements(elemId)).getOrElse(false)
+//
+//                                            logger.info(s"Suggestions for examples [subs=$subs, i=$idx, nn=${n.origText}, suggestions=${suggs.mkString(",")}, ok=$ok]")
+//
+//                                            ok
+//                                        }
+//
+//                                    if (all) {
+//                                        mark(ns, idx, elemId)
+//                                    }
+//                                }
+//                        }
                     })
                 }
             case None ⇒ // No-op.
         }
     }
+
 }

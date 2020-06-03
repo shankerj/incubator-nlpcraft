@@ -15,15 +15,6 @@
  * limitations under the License.
  */
 
-package org.apache.nlpcraft.server.mdo
+package org.apache.nlpcraft.server.ml
 
-import org.apache.nlpcraft.server.mdo.impl._
-
-/**
-  * Probe model ML config MDO.
-  */
-@NCMdoEntity(sql = false)
-case class NCMlConfigMdo(
-    @NCMdoField synonyms: Map[String /*Element ID*/, Map[String /*Synonym stem*/, NCMlSynonymInfoMdo /*Synonym info*/]],
-    @NCMdoField examples: Map[String /*Element ID*/, Map[Seq[String]/*Synonyms tokens*/, Int /*Position to substitute*/]]
-)
+case class NCMLSuggestion(word: String, stem: String, score: Double)

@@ -345,7 +345,8 @@ object NCModelManager extends NCService with DecorateAsScala {
             // Add element ID as a synonyms (dups ignored).
             val idChunks = Seq(chunkIdSplit(elmId))
 
-            idChunks.distinct.foreach(ch ⇒ addSynonym(isElementId = true, isValueName = false, null, ch))
+            if (!elm.mlSupport())
+                idChunks.distinct.foreach(ch ⇒ addSynonym(isElementId = true, isValueName = false, null, ch))
 
             // Add straight element synonyms (dups printed as warnings).
             val synsChunks = for (syn ← elm.getSynonyms.flatMap(parser.expand)) yield chunkSplit(syn)
@@ -631,25 +632,28 @@ object NCModelManager extends NCService with DecorateAsScala {
       */
     @throws[NCE]
     private def checkMl(mdl: NCModel, syns: Set[SynonymHolder]): Unit = {
-        val mlElements = mdl.getElements.asScala.filter(_.mlSupport())
+        val mlElements = mdl.getElements.asScala.filter(_.mlSupport)
 
         if (mlElements.nonEmpty) {
             val examples =
                 mdl.getExamples.asScala.map(s ⇒ NCNlpCoreManager.tokenize(s).map(t ⇒ NCNlpCoreManager.stemWord(t.token)))
 
-            println("examples="+examples)
-
             mlElements.foreach(e ⇒ {
-                val elemSyns = syns.flatMap(p ⇒
-                    if (p.elementId == e.getId && p.synonym.size == 1 && p.synonym.isTextOnly) Some(p.synonym) else None
-                )
-
-                println("elemSyns="+elemSyns)
+                val elemSyns = syns.filter(_.elementId == e.getId)
 
                 if (elemSyns.isEmpty)
                     throw new NCE(s"Text single word synonyms not found for ML element '${e.getId}'")
 
-                if (!elemSyns.exists(s ⇒ examples.exists(_.contains(s.stems))))
+                val bad =
+                    elemSyns.find(p ⇒ !p.synonym.isValueSynonym || p.synonym.size != 1 || !p.synonym.isTextOnly)
+
+                if (bad.nonEmpty)
+                    throw new NCE(
+                        s"ML element can contains only text single word value synonyms '${e.getId}', " +
+                            s"unsupported: ${bad.mkString(",")}"
+                    )
+
+                if (!elemSyns.exists(s ⇒ examples.exists(_.contains(s.synonym.stems))))
                     throw new NCE(s"Examples not found for ML element '${e.getId}'")
             })
         }

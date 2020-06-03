@@ -48,7 +48,9 @@ object NCConnectionManager extends NCService {
     private final val SO_TIMEOUT = 5 * 1000
     // Ping timeout.
     private final val PING_TIMEOUT = 5 * 1000
-    
+    // Maximum ML elements synonyms count (we allows any count but print warning)
+    private final val ML_SYNS_WARN = 100
+
     // Internal probe GUID.
     @volatile private var probeGuid: String = _
     
@@ -233,28 +235,33 @@ object NCConnectionManager extends NCService {
                         NCModelManager.getAllModels().map(m ⇒ {
                             val mdl = m.model
 
-
-                            // util.HashSet created to avoid scala collections serialization error.
+                            // java collections created directly to avoid scala collections serialization error.
                             // Seems to be a Scala bug.
+
+                            // {element ID → {value → value synonyms}}
+                            val mlSyns: Map[String, Map[String, Set[String]]] =
+                                mdl.getElements.asScala.filter(_.mlSupport()).map(e ⇒ {
+                                    // Gets single word text synonyms, its existing should be already validated.
+                                    val syns = m.synonyms(e.getId)(1).toSet
+
+                                    require(syns.nonEmpty)
+
+                                    e.getId → syns.groupBy(_.value).map(p ⇒ p._1 → p._2.map(_.stems))
+
+                                }).toMap
+
+                            val cnt = mlSyns.values.map(_.size).sum
+
+                            if (cnt >= ML_SYNS_WARN)
+                                logger.warn(s"Model: '${mdl.getId}' has too many ML synonyms: $cnt")
+
                             (
                                 mdl.getId,
                                 mdl.getName,
                                 mdl.getVersion,
                                 new util.HashSet[String](mdl.getEnabledBuiltInTokens),
-                                new util.HashMap[String, util.Map[String, Boolean]](
-                                    mdl.getElements.asScala.filter(_.mlSupport()).map(e ⇒ {
-                                        // Gets single word text synonyms, its existing should be already validated.
-                                        val syns = m.synonyms(e.getId)(1).filter(_.isTextOnly)
-
-                                        require(syns.nonEmpty)
-
-                                        val stems: util.Map[String, Boolean] =
-                                            new util.HashMap[String, Boolean](
-                                                syns.map(s ⇒ s.stems → s.isValueSynonym).toMap.asJava
-                                            )
-
-                                        e.getId → stems
-                                    }).toMap.asJava
+                                new util.HashMap[String, util.Map[String, util.Set[String]]](
+                                    mlSyns.map(p ⇒ p._1 → p._2.map(x ⇒ x._1 → x._2.asJava).asJava).asJava
                                 ),
                                 new util.HashSet[String](mdl.getExamples)
                             )

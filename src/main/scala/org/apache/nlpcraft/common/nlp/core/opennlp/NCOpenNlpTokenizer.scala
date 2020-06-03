@@ -39,6 +39,5 @@ object NCOpenNlpTokenizer extends NCNlpTokenizer {
     override def tokenize(sen: String): Seq[NCNlpCoreToken] =
         this.synchronized {
             tokenizer.tokenizePos(sen)
-        }
-        .toSeq.map(s ⇒ NCNlpCoreToken(s.getCoveredText(sen).toString, s.getStart, s.getEnd, s.length()))
+        }.toSeq.map(s ⇒ NCNlpCoreToken(s.getCoveredText(sen).toString, s.getStart, s.getEnd, s.length()))
 }

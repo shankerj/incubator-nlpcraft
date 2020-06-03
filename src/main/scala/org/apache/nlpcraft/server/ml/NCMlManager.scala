@@ -27,14 +27,17 @@ import org.apache.http.entity.StringEntity
 import org.apache.http.impl.client.HttpClients
 import org.apache.http.util.EntityUtils
 import org.apache.ignite.IgniteCache
+import org.apache.nlpcraft.common.ascii.NCAsciiTable
 import org.apache.nlpcraft.common.config.NCConfigurable
+import org.apache.nlpcraft.common.nlp.core.NCNlpCoreManager
 import org.apache.nlpcraft.common.{NCE, NCService}
 import org.apache.nlpcraft.server.ignite.NCIgniteInstance
-import org.apache.nlpcraft.server.mdo.{NCProbableSynonymMdo, NCMlConfigMdo}
+import org.apache.nlpcraft.server.mdo.{NCMlConfigMdo, NCMlSynonymInfoMdo}
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 
 import scala.collection.JavaConverters._
+import scala.collection.Map
 import scala.util.control.Exception.catching
 
 /**
@@ -49,15 +52,21 @@ object NCMlManager extends NCService with NCOpenCensusServerStats with NCIgniteI
     private final val TYPE_RESP = new TypeToken[RestResponse]() {}.getType
     private final val CLIENT = HttpClients.createDefault
 
+    // TODO:
+    private final val CONF_COUNT_PER_EXAMPLE = 20
+    private final val CONF_COUNT_SUM = 10
+    private final val CONF_MIN_SCORE = 1
+
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
-    @volatile private var cache: IgniteCache[(String, Int), Seq[NCProbableSynonymMdo]] = _
+    @volatile private var cache: IgniteCache[(String, Int), Seq[NCMLSuggestion]] = _
 
     case class RestRequest(sentence: String, simple: Boolean, lower: Int, upper: Int, limit: Int)
-    case class RestResponse(data: java.util.ArrayList[NCProbableSynonymMdo])
+    case class RestResponseBody(word: String,score: Double)
+    case class RestResponse(data: java.util.ArrayList[RestResponseBody])
 
     @throws[NCE]
-    private def mkHandler(req: String): ResponseHandler[Seq[NCProbableSynonymMdo]] =
+    private def mkHandler(req: String): ResponseHandler[Seq[RestResponseBody]] =
         (resp: HttpResponse) ⇒ {
             val code = resp.getStatusLine.getStatusCode
             val e = resp.getEntity
@@ -79,16 +88,17 @@ object NCMlManager extends NCService with NCOpenCensusServerStats with NCIgniteI
         }
 
     @throws[NCE]
-    def ask(sen: String, idx: Int, minScore: Double, limit: Int): Seq[NCProbableSynonymMdo] = {
+    def suggest(sen: String, idx: Int, minScore: Double, limit: Int): Seq[NCMLSuggestion] = {
         require(url.isDefined)
 
         val key: (String, Int) = (sen, idx)
 
         var res = cache.get(key)
 
-        if (res != null)
-            res
-        else {
+        // TODO:
+        res = null
+
+        if (res == null) {
             val post = new HttpPost(url.get + "/synonyms")
 
             post.setHeader("Content-Type", "application/json")
@@ -99,21 +109,27 @@ object NCMlManager extends NCService with NCOpenCensusServerStats with NCIgniteI
                 )
             )
 
-            res =
+            val reqRes =
                 try
                     CLIENT.execute(post, mkHandler(sen)).filter(_.score >= minScore).sortBy(-_.score)
                 finally
                     post.releaseConnection()
 
-            cache.put(key, res)
+            res = reqRes.map(p ⇒ NCMLSuggestion(word = p.word, stem = NCNlpCoreManager.stemWord(p.word), score = p.score))
 
-            res
+            cache.put(key, res)
         }
+
+        logger.info(
+            s"Request sent [text=$sen, idx=$idx, result=${res.map(p ⇒ s"${p.word}(${f(p.score)})").mkString(", ")}]"
+        )
+
+        res
     }
 
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
         catching(wrapIE) {
-            cache = ignite.cache[(String, Int), Seq[NCProbableSynonymMdo]]("ml-cache")
+            cache = ignite.cache[(String, Int), Seq[NCMLSuggestion]]("ml-cache")
         }
 
         parser = NCNlpServerManager.getParser
@@ -128,49 +144,108 @@ object NCMlManager extends NCService with NCOpenCensusServerStats with NCIgniteI
         super.stop()
     }
 
+    private def substitute(words: Seq[String], idx: Int, repl: String): String =
+        words.zipWithIndex.map { case (w, i) ⇒ if (idx == i) repl else w }.mkString(" ")
+
+    private def f(d: Double): String = "%1.3f" format d
+
     @throws[NCE]
-    def makeModelConfig(mlElems: Map[String, Map[String, Boolean]], examples: Set[String]): NCMlConfigMdo = {
-        val parsedExamples: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
+    def makeMlConfig(
+        mdlId: String,
+        mlSyns: Map[String /*Element ID*/, Map[String /*Value*/, Set[String] /*Values synonyms stems*/]],
+        examples: Set[String]
+    ): NCMlConfigMdo = {
+        val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
 
-        val examplesCfg = scala.collection.mutable.HashMap.empty[String, Map[Seq[String], Int]]
+        val examplesCfg =
+            collection.mutable.HashMap.empty[
+                String /*Element ID*/,
+                Map[Seq[String] /*Synonyms tokens*/, Int /*Position to substitute*/]
+            ].withDefault(_ ⇒ collection.mutable.HashMap.empty[Seq[String], Int])
 
-        val mlElementsData =
-            mlElems.map { case (elemId, syns) ⇒
-                val elemExamples = parsedExamples.filter(_.exists(e ⇒ syns.keySet.contains(e.stem)))
+        val synonyms  =
+            collection.mutable.HashMap.empty[
+                String /*Element ID*/, Map[String /*Synonym stem*/, NCMlSynonymInfoMdo /*Synonym info*/]
+            ].withDefault(_ ⇒ collection.mutable.HashMap.empty[String, NCMlSynonymInfoMdo])
 
-                if (elemExamples.isEmpty)
-                    throw new NCE(s"Examples not found for element: $elemId")
+        case class Holder(info: NCMlSynonymInfoMdo, suggestionStem: String, words: Seq[String], index: Int)
 
-                case class Holder(synomym: NCProbableSynonymMdo, isValue: Boolean, words: Seq[String], index: Int)
+        mlSyns.foreach { case (elemId, elemValsSyns) ⇒
+            val elemNormExs = normExs.filter(_.exists(e ⇒ elemValsSyns.values.flatten.toSet.contains(e.stem)))
 
-                val hs =
-                    elemExamples.flatMap(elemExample ⇒ {
-                        val words = elemExample.map(_.word)
-                        val normTxt = elemExample.map(_.normalWord).mkString(" ")
+            if (elemNormExs.isEmpty)
+                throw new NCE(s"Examples not found for element: $elemId")
 
-                        elemExample.
-                            flatMap(word ⇒
-                                syns.get(word.normalWord) match {
-                                    case Some(isValue) ⇒
-                                        val i = elemExample.indexOf(word)
-                                        val suggs = ask(normTxt, i, 0, 5) // TODO:
+            val hs =
+                elemNormExs.flatMap(ex ⇒ {
+                    val wordsEx = ex.map(_.word)
 
-                                        suggs.map(s ⇒ Holder(NCProbableSynonymMdo(s.word, s.score), isValue, words, i))
-                                    case None ⇒ Seq.empty
-                                }
-                            )
-                    })
-                        //filter(_.synomym.word.forall(_.isLower)). // TODO: nouns
+                    ex.flatMap(exWord ⇒
+                        if (elemValsSyns.exists(_._2.contains(exWord.stem))) {
+                            val i = ex.indexOf(exWord)
 
-                examplesCfg += elemId → hs.map(h ⇒ h.words → h.index).toMap
+                            elemValsSyns.flatMap(p ⇒ p._2.map(_ → p._1)).flatMap {
+                                case (syn, value) ⇒
+                                        suggest(substitute(wordsEx, i, syn), i, 0, CONF_COUNT_PER_EXAMPLE).
+                                            map(s ⇒ Holder(NCMlSynonymInfoMdo(s.score, value), s.stem, wordsEx, i))
+                            }
+                        }
+                        else
+                            Seq.empty
+                    )
+                })
 
-                elemId → hs.map(h ⇒ h.synomym → h.isValue)
-            }.toMap
+            examplesCfg += elemId → hs.map(h ⇒ h.words → h.index).toMap
 
-        val cfg = NCMlConfigMdo(mlElementsData, examplesCfg.toMap)
+            hs.toSeq.map(h ⇒ h → NCNlpCoreManager.stemWord(h.suggestionStem)).
+                groupBy { case (_, stem) ⇒ stem }.
+                map { case (stem, seq) ⇒ stem → {
+                    val sorted = seq.map { case (h, _) ⇒ h }.sortBy(-_.info.score)
 
-        logger.info(s"Config loaded: $cfg")
+                    val h = sorted.head
 
-        cfg
+                    // TODO:
+                    val score = sorted.map(_.info.score).sum
+
+                    Holder(NCMlSynonymInfoMdo(score, h.info.value), h.suggestionStem, h.words, h.index)
+                } }.
+                toSeq.
+                filter { case (_, h) ⇒ h.info.score >= CONF_MIN_SCORE }.
+                sortBy { case (_, h) ⇒ -h.info.score }.
+                take(CONF_COUNT_SUM).
+                foreach { case (stem, h) ⇒ synonyms(elemId) += stem → h.info }
+        }
+
+        logger.whenInfoEnabled({
+            logger.info(s"Model ML config: $mdlId")
+
+            val tblSyns = NCAsciiTable()
+
+            tblSyns #= ("Synonym", "Value", "Score")
+
+            synonyms.foreach { case (elemId, map) ⇒
+                tblSyns += (s"Element ID: '$elemId'", "", "")
+
+                map.toSeq.sortBy(-_._2.score).foreach {
+                    case (syn, info) ⇒ tblSyns += (syn, info.value, f(info.score))
+                }
+            }
+
+            tblSyns.info(logger, Some("Synonyms:"))
+
+            val tblEx = NCAsciiTable()
+
+            tblEx #= ("Example", "Substitution index")
+
+            examplesCfg.foreach { case (elemId, map) ⇒
+                tblEx += (s"Element ID: '$elemId'", "")
+
+                map.foreach { case (syn, idx) ⇒ tblEx += (syn.mkString(" "), idx)}
+            }
+
+            tblEx.info(logger, Some("Examples:"))
+        })
+
+        NCMlConfigMdo(synonyms.toMap.map(p ⇒ p._1 → p._2.toMap), examplesCfg.toMap.map(p ⇒ p._1 → p._2.toMap))
     }
 }

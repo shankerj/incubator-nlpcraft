@@ -20,10 +20,10 @@ package org.apache.nlpcraft.server.mdo
 import org.apache.nlpcraft.server.mdo.impl.{NCMdoEntity, NCMdoField}
 
 /**
-  * Probe element probable synonym MDO.
+  * ML synonym info MDO.
   */
 @NCMdoEntity(sql = false)
-case class NCProbableSynonymMdo(
-    @NCMdoField word: String,
-    @NCMdoField score: Double
+case class NCMlSynonymInfoMdo(
+    @NCMdoField score: Double,
+    @NCMdoField value: String
 )

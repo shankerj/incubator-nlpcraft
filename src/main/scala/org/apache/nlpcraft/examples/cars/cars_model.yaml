@@ -20,14 +20,26 @@ name: "Cars Example Model"
 version: "1.0"
 description: "Cars example model."
 examples:
-  - "I like drive my new BMW ."
-  - "BMW has the best engine ."
+  - "I like drive my new BMW"
+  - "BMW has the best engine"
+  - "A fox lives in the woods"
+  - "A wild cat is very dangerous"
+  - "A fox eats hens."
+  - "The fox was already in your chicken house. "
 enabledBuiltInTokens: [] # Don't use any built-in tokens.
 elements:
   - id: "cars:brand"
     description: "Any car"
-    synonyms:
-      - "BMW"
+    values:
+      - name: "BMW"
     mlSupport: true
+  - id: "cars:animal"
+    description: "Any animal"
+    values:
+       - name: "cat"
+         synonyms:
+           - "tomcat"
+       - name: "fox"
+    mlSupport: "true"
 intents:
   - "intent=brand term(brand)={id == 'cars:brand'}"

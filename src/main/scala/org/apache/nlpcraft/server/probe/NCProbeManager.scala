@@ -44,7 +44,7 @@ import org.apache.nlpcraft.server.query.NCQueryManager
 import org.apache.nlpcraft.server.sql.NCSql
 
 import scala.collection.JavaConverters._
-import scala.collection.{Map, mutable}
+import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
@@ -581,7 +581,7 @@ object NCProbeManager extends NCService {
                     name: String,
                     version: String,
                     enabledBuiltInTokens: Set[String],
-                    mlElements: Map[String, Map[String, Boolean]],
+                    mlSynonyms: Map[String, Map[String, Set[String]]],
                     examples: Set[String]
                 )
 
@@ -591,7 +591,7 @@ object NCProbeManager extends NCService {
                         String,
                         String,
                         java.util.Set[String],
-                        java.util.Map[String, java.util.Map[String, Boolean]],
+                        java.util.Map[String, java.util.Map[String, java.util.Set[String]]],
                         java.util.Set[String]
                     )]]("PROBE_MODELS").
                         map { case (
@@ -599,7 +599,7 @@ object NCProbeManager extends NCService {
                                 mdlName,
                                 mdlVer,
                                 enabledBuiltInToks,
-                                mlElements,
+                                mlSyns,
                                 examples
                             ) ⇒
                             ProbeModel(
@@ -607,7 +607,9 @@ object NCProbeManager extends NCService {
                                 name = mdlName,
                                 version = mdlVer,
                                 enabledBuiltInTokens = enabledBuiltInToks.asScala.toSet,
-                                mlElements = mlElements.asScala.map(p ⇒ p._1 → p._2.asScala).toMap,
+                                mlSynonyms =
+                                    mlSyns.asScala.
+                                        map(p ⇒ p._1 → p._2.asScala.map(x ⇒ x._1 → x._2.asScala.toSet).toMap).toMap,
                                 examples = examples.asScala.toSet
                             )
                         }.toSet
@@ -615,7 +617,7 @@ object NCProbeManager extends NCService {
                 val probeTokTypes = models.flatMap(_.enabledBuiltInTokens).map(_.takeWhile(_ != ':'))
                 val tokProviders = NCServerEnrichmentManager.getSupportedProviders
 
-                if (!NCServerEnrichmentManager.supportMlServer && models.exists(_.mlElements.nonEmpty))
+                if (!NCServerEnrichmentManager.supportMlServer && models.exists(_.mlSynonyms.nonEmpty))
                     respond("S2P_PROBE_UNSUPPORTED_ML")
                 else if (probeTokTypes.exists(typ ⇒ !tokProviders.contains(typ)))
                     respond("S2P_PROBE_UNSUPPORTED_TOKENS_TYPES")
@@ -631,8 +633,8 @@ object NCProbeManager extends NCService {
                                     version = m.version,
                                     enabledBuiltInTokens = m.enabledBuiltInTokens,
                                     mlConfig =
-                                        if (m.mlElements.nonEmpty)
-                                            Some(NCMlManager.makeModelConfig(m.mlElements.toMap, m.examples))
+                                        if (m.mlSynonyms.nonEmpty)
+                                            Some(NCMlManager.makeMlConfig(m.id, m.mlSynonyms, m.examples))
                                         else
                                             None
                                 )
