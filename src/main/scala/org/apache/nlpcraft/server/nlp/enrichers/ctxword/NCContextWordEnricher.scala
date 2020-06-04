@@ -61,10 +61,10 @@ object NCContextWordEnricher extends NCServerEnricher {
         super.stop()
     }
 
-    private def tryDirect(cfg: NCContextWordConfigMdo, t: NCNlpSentenceToken): Option[Holder] =
+    private def tryDirect(cfg: NCContextWordConfigMdo, t: NCNlpSentenceToken, score: Double): Option[Holder] =
         cfg.synonyms.toStream.flatMap { case (elemId, syns) ⇒
             syns.get(t.stem) match {
-                case Some(value) ⇒ Some(Holder(elemId, value, 1))
+                case Some(value) ⇒ Some(Holder(elemId, value, score))
                 case None ⇒ None
             }
         }.headOption
@@ -142,10 +142,12 @@ object NCContextWordEnricher extends NCServerEnricher {
         startScopedSpan("enrich", parent, "srvReqId" → ns.srvReqId, "txt" → ns.text) { _ ⇒
             ns.ctxWordsConfig match {
                 case Some(cfg) ⇒
+                    val maxScore = cfg.contextWords.values.flatten.map(_._2).max
+
                     // TODO: other names.
                     ns.filter(_.pos.startsWith("N")).foreach(t ⇒
                         Seq(
-                            () ⇒ tryDirect(cfg, t),
+                            () ⇒ tryDirect(cfg, t, maxScore * 10),
                             () ⇒ trySentence(cfg, t, ns)
                             // TODO:
                             //,

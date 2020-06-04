@@ -185,7 +185,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val n = elemNormExs.size * allElemSyns.size
 
-            var suggs =
+            val suggsSumScores =
                 elemNormExs.flatMap { case (ex, idxs) ⇒
                     val exWords = ex.map(_.word)
 
@@ -200,39 +200,28 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     toSeq.
                     //filter(_.word.forall(ch ⇒ ch.isLetter && ch.isLower)). // TODO:
                     groupBy(_.stem).
-                    filter(_._2.size > n / 3.0). // Drop rare variants.
-                    map { case (_, seq) ⇒
-                        val sorted = seq.sortBy(-_.score)
-                        val head = sorted.head
-
-
-                        println("head.stem="+head.stem + " sorted.size==" + sorted.size)
-                        NCContextWord(word = head.word, stem = head.stem, score = sorted.map(_.score).sum)
-                    }.
+                    filter(_._2.size > n / 3.0). // Drop rare variants. TODO:
+                    map { case (_, seq) ⇒ seq.sortBy(-_.score).head → seq.map(_.score).sum}.
                     toSeq.
-                    sortBy(-_.score)
+                    sortBy { case(s, sumScore) ⇒ -sumScore}
 
-            val tmp = collection.mutable.ArrayBuffer.empty[NCContextWord]
+            val suggs = collection.mutable.ArrayBuffer.empty[NCContextWord]
 
-            val topWeights = suggs.map(_.score).sum * 0.5
-            var weights = 0.0
+            val maxSum = suggsSumScores.map(_._2).sum * 0.5
+            var sum = 0.0
 
-            println("max="+topWeights + " elem=" + elemId + ", n="+n + ", suggs.size="+suggs.size)
+            for ((s, sumScore) ← suggsSumScores if sum < maxSum) {
+                suggs += s
 
-            for (s ← suggs if weights < topWeights) {
-                tmp += s
+                println("sum="+sum + ", s="+s)
 
-                println("sum="+weights + ", s="+s)
-
-                weights += s.score
+                sum += sumScore
             }
-
-            suggs = tmp
 
             if (suggs.isEmpty)
                 throw new NCE(s"Context words cannot be prepared for element: $elemId")
 
-            contextWords += elemId → suggs.map(p ⇒ p.stem → p.score).toMap
+            contextWords += elemId → suggs.sortBy(-_.score).map(p ⇒ p.stem → p.score).toMap
         }
 
         logger.whenInfoEnabled({

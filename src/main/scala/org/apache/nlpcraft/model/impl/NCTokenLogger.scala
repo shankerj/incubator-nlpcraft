@@ -427,11 +427,8 @@ object NCTokenLogger extends LazyLogging {
                 idxs.asScala.mkString(", ")
             }
 
-            def mkDouble3(name: String): Double = {
-                val d: Double = get(name)
-
-                (d * 1000).intValue / 1000.0
-            }
+            def round(d: Double): Double = (d * 1000).intValue / 1000.0
+            def mkDouble3(name: String): Double = round(get(name))
 
             val row =
                 Seq(
@@ -615,6 +612,11 @@ object NCTokenLogger extends LazyLogging {
 
                                 if (parts.nonEmpty)
                                     s = s"$s, parts=[$parts]"
+
+                                val scoreOpt: Option[Double] = getOpt("score")
+
+                                if (scoreOpt.nonEmpty)
+                                    s = s"$s, score=${round(scoreOpt.get)}"
 
                                 s
                             }

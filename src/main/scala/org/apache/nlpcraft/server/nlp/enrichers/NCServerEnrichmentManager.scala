@@ -196,7 +196,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
             n.keySet
                 .filter(name ⇒ HEADERS.find(h ⇒ isType(typ, h._1)) match {
                     case Some((_, (_, names))) ⇒ names.contains(name)
-                    case None ⇒ name == "noteType"
+                    case None ⇒ name == "noteType" || name == "score"
                 })
                 .map(name ⇒
                     Header(
@@ -213,7 +213,7 @@ object NCServerEnrichmentManager extends NCService with NCIgniteInstance {
         val headers = s.flatten.flatMap(mkNoteHeaders).distinct.sortBy(hdr ⇒
             HEADERS.find(p ⇒ isType(hdr.noteType, p._1)) match {
                 case Some((_, (idx, names))) ⇒ idx * 100 + names.indexOf(hdr.noteName)
-                case None ⇒ Integer.MAX_VALUE
+                case None ⇒ if (hdr.noteName == "noteType") Integer.MAX_VALUE - 1 else Integer.MAX_VALUE
             }
         )
 
