@@ -15,31 +15,45 @@
 # limitations under the License.
 #
 
-id: "nlpcraft.cars.ex"
-name: "Cars Example Model"
+# ML enabled elements.
+# These elements should have values and ca have value synonyms.
+# Elements values and their synonyms must be single word and text only (regex and DSL unsupported)
+# These elements can't have elements synonyms.
+# At least obe example should у provided for each ML element.
+
+id: "nlpcraft.classification.ex"
+name: "Classification Example Model"
 version: "1.0"
-description: "Cars example model."
+description: "Classification example model."
 examples:
   - "I like drive my new BMW"
   - "BMW has the best engine"
-  - "A fox lives in the woods"
   - "A wild cat is very dangerous"
-  - "A fox eats hens."
-  - "The fox was already in your chicken house. "
+  - "A fox eats hens"
+  - "The fox was already in your chicken house"
+  - "What is the local temperature"
+  - "This is the first day of heavy rain"
 enabledBuiltInTokens: [] # Don't use any built-in tokens.
 elements:
-  - id: "cars:brand"
-    description: "Any car"
+  - id: "class:carBrand"
+    description: "Any car brands"
     values:
       - name: "BMW"
-    mlSupport: true
-  - id: "cars:animal"
+    contextWordSupport: true
+  - id: "class:animal"
     description: "Any animal"
     values:
        - name: "cat"
          synonyms:
            - "tomcat"
        - name: "fox"
-    mlSupport: "true"
+    contextWordSupport: "true"
+  - id: "class:weather"
+    description: "Any weather related words"
+    values:
+      - name: "temperature"
+      - name: "rain"
+      - name: "sun"
+    contextWordSupport: "true"
 intents:
-  - "intent=brand term(brand)={id == 'cars:brand'}"
+  - "intent=classification conv=false term(brands)={id == 'class:carBrand'}[0,10] term(animals)={id == 'class:animal'}[0,10] term(ws)={id == 'class:weather'}[0,10]"

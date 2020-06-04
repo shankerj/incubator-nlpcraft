@@ -329,7 +329,7 @@ public interface NCElement extends NCMetadata, Serializable {
     }
 
     // TODO:
-    default boolean mlSupport() {
+    default boolean isContextWordSupport() {
         return false;
     }
 }

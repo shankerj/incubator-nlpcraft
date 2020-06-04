@@ -28,7 +28,7 @@ case class NCProbeModelMdo(
     @NCMdoField name: String,
     @NCMdoField version: String,
     @NCMdoField enabledBuiltInTokens: Set[String],
-    @NCMdoField mlConfig: Option[NCMlConfigMdo]
+    @NCMdoField ctxWordsConfig: Option[NCContextWordConfigMdo]
 ) extends NCAnnotatedMdo[NCProbeModelMdo] {
     override def hashCode(): Int = s"$id$name".hashCode()
     

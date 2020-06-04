@@ -142,6 +142,12 @@ private[nlpcraft] object NCTokenImpl {
                 if (elm.getMetadata != null)
                     elm.getMetadata.asScala.foreach { case (k, v) ⇒ md.put(k, v.asInstanceOf[java.io.Serializable]) }
 
+                // TODO:
+                usrNote.dataOpt[Double]("score") match {
+                    case Some(score) ⇒ md.put(s"${elm.getId}:score", score)
+                    case None ⇒ // No-op.
+                }
+
                 new NCTokenImpl(
                     mdl.model,
                     srvReqId = srvReqId,

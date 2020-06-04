@@ -353,7 +353,7 @@ object NCModelEnricher extends NCProbeEnricher with DecorateAsScala {
                         var seq: Seq[Seq[Complex]] = null
 
                         // Attempt to match each element.
-                        for (elm ← mdl.elements.values if !elm.mlSupport() && !alreadyMarked(toks, elm.getId)) {
+                        for (elm ← mdl.elements.values if !elm.isContextWordSupport() && !alreadyMarked(toks, elm.getId)) {
                             var found = false
 
                             def addMatch(

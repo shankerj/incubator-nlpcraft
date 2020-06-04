@@ -22,7 +22,7 @@ import java.util.Collections
 
 import org.apache.nlpcraft.common.NCE
 import org.apache.nlpcraft.common.nlp.pos.NCPennTreebank
-import org.apache.nlpcraft.server.mdo.NCMlConfigMdo
+import org.apache.nlpcraft.server.mdo.NCContextWordConfigMdo
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -448,7 +448,7 @@ import org.apache.nlpcraft.common.nlp.NCNlpSentence._
   * @param text Normalized text.
   * @param weight Weight.
   * @param enabledBuiltInToks Enabled built-in tokens.
-  * @param mlCfg ML model config holder. Optional.
+  * @param ctxWordsConfig Context words model config holder. Optional.
   * @param tokens Initial buffer.
   */
 class NCNlpSentence(
@@ -456,7 +456,7 @@ class NCNlpSentence(
     val text: String,
     val weight: Double,
     val enabledBuiltInToks: Set[String],
-    val mlCfg: Option[NCMlConfigMdo],
+    val ctxWordsConfig: Option[NCContextWordConfigMdo],
     override val tokens: ArrayBuffer[NCNlpSentenceToken] = new ArrayBuffer[NCNlpSentenceToken](32)
 ) extends NCNlpSentenceTokenBuffer(tokens) with java.io.Serializable {
     @transient
@@ -466,7 +466,7 @@ class NCNlpSentence(
 
     // Deep copy.
     override def clone(): NCNlpSentence =
-        new NCNlpSentence(srvReqId, text, weight, enabledBuiltInToks, mlCfg, tokens.map(_.clone()))
+        new NCNlpSentence(srvReqId, text, weight, enabledBuiltInToks, ctxWordsConfig, tokens.map(_.clone()))
 
     /**
       * Utility method that gets set of notes for given note type collected from
