@@ -37,7 +37,7 @@ import org.apache.nlpcraft.common.{NCService, _}
 import org.apache.nlpcraft.probe.mgrs.NCProbeMessage
 import org.apache.nlpcraft.server.company.NCCompanyManager
 import org.apache.nlpcraft.server.mdo.{NCCompanyMdo, NCProbeMdo, NCProbeModelMdo, NCUserMdo}
-import org.apache.nlpcraft.server.ml.NCMlManager
+import org.apache.nlpcraft.server.ctxword.NCContextWordManager
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnrichmentManager
 import org.apache.nlpcraft.server.proclog.NCProcessLogManager
 import org.apache.nlpcraft.server.query.NCQueryManager
@@ -581,7 +581,7 @@ object NCProbeManager extends NCService {
                     name: String,
                     version: String,
                     enabledBuiltInTokens: Set[String],
-                    mlSynonyms: Map[String, Map[String, Set[String]]],
+                    ctxSynonyms: Map[String, Map[String, Set[String]]],
                     examples: Set[String]
                 )
 
@@ -607,7 +607,7 @@ object NCProbeManager extends NCService {
                                 name = mdlName,
                                 version = mdlVer,
                                 enabledBuiltInTokens = enabledBuiltInToks.asScala.toSet,
-                                mlSynonyms =
+                                ctxSynonyms =
                                     mlSyns.asScala.
                                         map(p ⇒ p._1 → p._2.asScala.map(x ⇒ x._1 → x._2.asScala.toSet).toMap).toMap,
                                 examples = examples.asScala.toSet
@@ -617,8 +617,8 @@ object NCProbeManager extends NCService {
                 val probeTokTypes = models.flatMap(_.enabledBuiltInTokens).map(_.takeWhile(_ != ':'))
                 val tokProviders = NCServerEnrichmentManager.getSupportedProviders
 
-                if (!NCServerEnrichmentManager.supportMlServer && models.exists(_.mlSynonyms.nonEmpty))
-                    respond("S2P_PROBE_UNSUPPORTED_ML")
+                if (!NCServerEnrichmentManager.isSupportCtxWords && models.exists(_.ctxSynonyms.nonEmpty))
+                    respond("S2P_PROBE_UNSUPPORTED_CTXWORDS")
                 else if (probeTokTypes.exists(typ ⇒ !tokProviders.contains(typ)))
                     respond("S2P_PROBE_UNSUPPORTED_TOKENS_TYPES")
                 else {
@@ -632,9 +632,9 @@ object NCProbeManager extends NCService {
                                     name = m.name,
                                     version = m.version,
                                     enabledBuiltInTokens = m.enabledBuiltInTokens,
-                                    mlConfig =
-                                        if (m.mlSynonyms.nonEmpty)
-                                            Some(NCMlManager.makeMlConfig(m.id, m.mlSynonyms, m.examples))
+                                    ctxWordsConfig =
+                                        if (m.ctxSynonyms.nonEmpty)
+                                            Some(NCContextWordManager.makeContextWordConfig(m.id, m.ctxSynonyms, m.examples))
                                         else
                                             None
                                 )
@@ -678,9 +678,9 @@ object NCProbeManager extends NCService {
                     }
                     catch {
                         case e: NCE ⇒
-                            logger.error("Errors during ML initialization for probe", e)
+                            logger.error("Errors during context words initialization for probe", e)
                             // TODO: reason ?
-                            respond("S2P_PROBE_ML_ERROR")
+                            respond("S2P_PROBE_CTXWORDS_ERROR")
                     }
                 }
             }

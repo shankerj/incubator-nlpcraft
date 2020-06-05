@@ -15,15 +15,6 @@
  * limitations under the License.
  */
 
-package org.apache.nlpcraft.server.mdo
+package org.apache.nlpcraft.server.ctxword
 
-import org.apache.nlpcraft.server.mdo.impl.{NCMdoEntity, NCMdoField}
-
-/**
-  * ML synonym info MDO.
-  */
-@NCMdoEntity(sql = false)
-case class NCMlSynonymInfoMdo(
-    @NCMdoField score: Double,
-    @NCMdoField value: String
-)
+case class NCContextWord(word: String, stem: String, score: Double)

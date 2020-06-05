@@ -31,7 +31,7 @@ public class NCElementJson {
     private Map<String, Object> metadata = new HashMap<>();
     private NCValueJson[] values = new NCValueJson[0];
     private String valueLoader;
-    private boolean mlSupport;
+    private boolean ctxWordSupport;
 
     /**
      *
@@ -165,15 +165,15 @@ public class NCElementJson {
      *
      * @return
      */
-    public boolean isMlSupport() {
-        return mlSupport;
+    public boolean isContextWordSupport() {
+        return ctxWordSupport;
     }
 
     /**
      *
-     * @param mlSupport
+     * @param ctxWordSupport
      */
-    public void setMlSupport(boolean mlSupport) {
-        this.mlSupport = mlSupport;
+    public void setContextWordSupport(boolean ctxWordSupport) {
+        this.ctxWordSupport = ctxWordSupport;
     }
 }

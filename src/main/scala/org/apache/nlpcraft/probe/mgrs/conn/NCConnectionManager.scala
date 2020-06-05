@@ -48,8 +48,8 @@ object NCConnectionManager extends NCService {
     private final val SO_TIMEOUT = 5 * 1000
     // Ping timeout.
     private final val PING_TIMEOUT = 5 * 1000
-    // Maximum ML elements synonyms count (we allows any count but print warning)
-    private final val ML_SYNS_WARN = 100
+    // Maximum context words elements synonyms count (we allows any count but print warning)
+    private final val CTX_SYNS_CNT_WARN = 100
 
     // Internal probe GUID.
     @volatile private var probeGuid: String = _
@@ -239,8 +239,8 @@ object NCConnectionManager extends NCService {
                             // Seems to be a Scala bug.
 
                             // {element ID → {value → value synonyms}}
-                            val mlSyns: Map[String, Map[String, Set[String]]] =
-                                mdl.getElements.asScala.filter(_.mlSupport()).map(e ⇒ {
+                            val ctxSyns: Map[String, Map[String, Set[String]]] =
+                                mdl.getElements.asScala.filter(_.isContextWordSupport).map(e ⇒ {
                                     // Gets single word text synonyms, its existing should be already validated.
                                     val syns = m.synonyms(e.getId)(1).toSet
 
@@ -250,10 +250,10 @@ object NCConnectionManager extends NCService {
 
                                 }).toMap
 
-                            val cnt = mlSyns.values.map(_.size).sum
+                            val cnt = ctxSyns.values.map(_.size).sum
 
-                            if (cnt >= ML_SYNS_WARN)
-                                logger.warn(s"Model: '${mdl.getId}' has too many ML synonyms: $cnt")
+                            if (cnt >= CTX_SYNS_CNT_WARN)
+                                logger.warn(s"Model: '${mdl.getId}' has too many context synonyms: $cnt")
 
                             (
                                 mdl.getId,
@@ -261,7 +261,7 @@ object NCConnectionManager extends NCService {
                                 mdl.getVersion,
                                 new util.HashSet[String](mdl.getEnabledBuiltInTokens),
                                 new util.HashMap[String, util.Map[String, util.Set[String]]](
-                                    mlSyns.map(p ⇒ p._1 → p._2.map(x ⇒ x._1 → x._2.asJava).asJava).asJava
+                                    ctxSyns.map(p ⇒ p._1 → p._2.map(x ⇒ x._1 → x._2.asJava).asJava).asJava
                                 ),
                                 new util.HashSet[String](mdl.getExamples)
                             )
@@ -277,8 +277,8 @@ object NCConnectionManager extends NCService {
                     case "S2P_PROBE_NOT_FOUND" ⇒ err("Probe failed to start due to unknown error.")
                     case "S2P_PROBE_VERSION_MISMATCH" ⇒ err(s"REST server does not support probe version: ${ver.version}")
                     case "S2P_PROBE_UNSUPPORTED_TOKENS_TYPES" ⇒ err(s"REST server does not support some model enabled tokes types.")
-                    case "S2P_PROBE_UNSUPPORTED_ML" ⇒ err(s"REST server does not support ML enabled elements.")
-                    case "S2P_PROBE_ML_ERROR" ⇒ err(s"REST server ML elements initialization error.")
+                    case "S2P_PROBE_UNSUPPORTED_CTXWORDS" ⇒ err(s"REST server does not support context words enabled elements.")
+                    case "S2P_PROBE_CTXWORDS_ERROR" ⇒ err(s"REST server context words elements initialization error.")
                     case "S2P_PROBE_OK" ⇒ logger.trace("Uplink handshake OK.") // Bingo!
                     case _ ⇒ err(s"Unknown REST server message: ${resp.getType}")
                 }

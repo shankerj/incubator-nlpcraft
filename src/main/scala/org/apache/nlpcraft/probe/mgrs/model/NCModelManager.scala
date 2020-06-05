@@ -345,7 +345,7 @@ object NCModelManager extends NCService with DecorateAsScala {
             // Add element ID as a synonyms (dups ignored).
             val idChunks = Seq(chunkIdSplit(elmId))
 
-            if (!elm.mlSupport())
+            if (!elm.isContextWordSupport)
                 idChunks.distinct.foreach(ch ⇒ addSynonym(isElementId = true, isValueName = false, null, ch))
 
             // Add straight element synonyms (dups printed as warnings).
@@ -485,7 +485,7 @@ object NCModelManager extends NCService with DecorateAsScala {
             logger.warn(s"Duplicates are allowed by '${mdl.getId}' model but large number may degrade the performance.")
         }
 
-        checkMl(mdl, syns.toSet)
+        checkCtxWords(mdl, syns.toSet)
     
         mdl.getMetadata.put(MDL_META_ALL_ALIASES_KEY, allAliases.toSet)
         mdl.getMetadata.put(MDL_META_ALL_ELM_IDS_KEY,
@@ -631,30 +631,30 @@ object NCModelManager extends NCService with DecorateAsScala {
       * @param syns Synonyms.
       */
     @throws[NCE]
-    private def checkMl(mdl: NCModel, syns: Set[SynonymHolder]): Unit = {
-        val mlElements = mdl.getElements.asScala.filter(_.mlSupport)
+    private def checkCtxWords(mdl: NCModel, syns: Set[SynonymHolder]): Unit = {
+        val ctxElements = mdl.getElements.asScala.filter(_.isContextWordSupport)
 
-        if (mlElements.nonEmpty) {
+        if (ctxElements.nonEmpty) {
             val examples =
                 mdl.getExamples.asScala.map(s ⇒ NCNlpCoreManager.tokenize(s).map(t ⇒ NCNlpCoreManager.stemWord(t.token)))
 
-            mlElements.foreach(e ⇒ {
+            ctxElements.foreach(e ⇒ {
                 val elemSyns = syns.filter(_.elementId == e.getId)
 
                 if (elemSyns.isEmpty)
-                    throw new NCE(s"Text single word synonyms not found for ML element '${e.getId}'")
+                    throw new NCE(s"Text single word synonyms not found for context words element '${e.getId}'")
 
                 val bad =
                     elemSyns.find(p ⇒ !p.synonym.isValueSynonym || p.synonym.size != 1 || !p.synonym.isTextOnly)
 
                 if (bad.nonEmpty)
                     throw new NCE(
-                        s"ML element can contains only text single word value synonyms '${e.getId}', " +
+                        s"Context words element can contains only text single word value synonyms '${e.getId}', " +
                             s"unsupported: ${bad.mkString(",")}"
                     )
 
                 if (!elemSyns.exists(s ⇒ examples.exists(_.contains(s.synonym.stems))))
-                    throw new NCE(s"Examples not found for ML element '${e.getId}'")
+                    throw new NCE(s"Examples not found for context words element '${e.getId}'")
             })
         }
     }

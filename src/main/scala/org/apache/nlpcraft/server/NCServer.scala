@@ -34,7 +34,7 @@ import org.apache.nlpcraft.server.feedback.NCFeedbackManager
 import org.apache.nlpcraft.server.geo.NCGeoManager
 import org.apache.nlpcraft.server.ignite.{NCIgniteInstance, NCIgniteRunner}
 import org.apache.nlpcraft.server.lifecycle.NCServerLifecycleManager
-import org.apache.nlpcraft.server.ml.NCMlManager
+import org.apache.nlpcraft.server.ctxword.NCContextWordManager
 import org.apache.nlpcraft.server.nlp.core.NCNlpServerManager
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnrichmentManager
 import org.apache.nlpcraft.server.nlp.preproc.NCPreProcessManager
@@ -126,7 +126,7 @@ object NCServer extends App with NCIgniteInstance with LazyLogging with NCOpenCe
                 () ⇒ NCFeedbackManager.start(span)
             )
 
-            NCMlManager.start(span)
+            NCContextWordManager.start(span)
             NCQueryManager.start(span)
             NCRestManager.start(span)
     
@@ -146,7 +146,7 @@ object NCServer extends App with NCIgniteInstance with LazyLogging with NCOpenCe
             Seq(
                 NCRestManager,
                 NCQueryManager,
-                NCMlManager,
+                NCContextWordManager,
                 NCFeedbackManager,
                 NCCompanyManager,
                 NCUserManager,

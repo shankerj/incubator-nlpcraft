@@ -15,6 +15,16 @@
  * limitations under the License.
  */
 
-package org.apache.nlpcraft.server.ml
+package org.apache.nlpcraft.server.mdo
 
-case class NCMLSuggestion(word: String, stem: String, score: Double)
+import org.apache.nlpcraft.server.mdo.impl._
+
+/**
+  * Probe model context word config MDO.
+  */
+@NCMdoEntity(sql = false)
+case class NCContextWordConfigMdo(
+    @NCMdoField synonyms: Map[String /*Element ID*/, Map[String /*Synonym stem*/, String /*Value*/]],
+    @NCMdoField contextWords: Map[String /*Element ID*/, Map[String /*Context word stem*/, Double /*Score*/]],
+    @NCMdoField examples: Map[String /*Element ID*/, Map[Seq[String]/*Synonyms tokens*/, Seq[Int] /*Positions to substitute*/]]
+)

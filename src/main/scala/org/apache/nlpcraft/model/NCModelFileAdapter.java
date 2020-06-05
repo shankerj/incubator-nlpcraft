@@ -303,8 +303,8 @@ abstract public class NCModelFileAdapter extends NCModelAdapter {
                         }
 
                         @Override
-                        public boolean mlSupport() {
-                            return js.isMlSupport();
+                        public boolean isContextWordSupport() {
+                            return js.isContextWordSupport();
                         }
 
                         private NCValueLoader mkLoader(String clsName) {
