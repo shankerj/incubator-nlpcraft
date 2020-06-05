@@ -40,7 +40,7 @@ import org.apache.nlpcraft.model.tools.sqlgen.impl.NCSqlModelGeneratorImpl;
  *     <li>
  *         Modify and extend generated model stub to your own needs. In most cases, you'll need
  *         to add, remove or modify auto-generated synonyms, add intents, etc. Note, however, that generated model
- *         is fully complete and can be used as is.
+ *         is valid and minimally complete and can be used as is.
  *     </li>
  *     <li>
  *         Use {@link NCSqlSchemaBuilder#makeSchema(NCModel)} method to get an object representation of the
