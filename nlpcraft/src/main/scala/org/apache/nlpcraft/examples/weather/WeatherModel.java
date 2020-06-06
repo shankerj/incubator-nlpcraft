@@ -33,7 +33,7 @@ import static java.time.temporal.ChronoUnit.DAYS;
  * Weather example data model.
  * <p>
  * This is relatively complete weather service with JSON output and a non-trivial
- * intent matching logic. It uses Dark Sky API weather provider REST service for the actual
+ * intent matching logic. It uses Apple's Dark Sky API weather provider REST service for the actual
  * weather information (https://darksky.net/dev/docs#overview)
  * <p>
  * Note that this example uses class-based intent DSL to demonstrate its usage pattern.
@@ -167,7 +167,7 @@ public class WeatherModel extends NCModelFileAdapter {
      * @param ctx Solver context.
      */
     private void checkMatch(NCIntentMatch ctx) {
-        // Reject if intent match is not exact ("dangling" tokens remain).
+        // Reject if intent match is not exact (at least one "dangling" token remain).
         if (ctx.isAmbiguous())
             throw new NCRejection("Please clarify your request.");
     }
@@ -241,7 +241,7 @@ public class WeatherModel extends NCModelFileAdapter {
         @NCIntentTerm("city") Optional<NCToken> cityTokOpt,
         @NCIntentTerm("date") Optional<NCToken> dateTokOpt
     ) {
-        return onPeriodMatch(ctx, cityTokOpt, dateTokOpt,-5);
+        return onPeriodMatch(ctx, cityTokOpt, dateTokOpt, -5);
     }
 
     /**
