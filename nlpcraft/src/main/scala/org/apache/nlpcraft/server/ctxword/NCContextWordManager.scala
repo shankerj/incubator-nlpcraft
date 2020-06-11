@@ -49,23 +49,23 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     }
 
     private final val GSON = new Gson
-    private final val TYPE_RESP = new TypeToken[RestResponse]() {}.getType
+    private final val TYPE_RESP = new TypeToken[java.util.List[java.util.List[java.util.List[Any]]]]() {}.getType
     private final val CLIENT = HttpClients.createDefault
 
     // TODO:CONF_REQ_MIN_SCORE
     private final val CONF_REQ_LIMIT = 20
     private final val CONF_REQ_MIN_SCORE = 0.7
 
+    type CacheKey = (String, Int)
+
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
-    @volatile private var cache: IgniteCache[(String, Int), Seq[NCContextWord]] = _
+    @volatile private var cache: IgniteCache[CacheKey, Seq[NCContextWord]] = _
 
-    case class RestRequest(sentence: String, simple: Boolean, lower: Int, upper: Int, limit: Int)
-    case class RestResponseBody(word: String, score: Double)
-    case class RestResponse(data: java.util.ArrayList[RestResponseBody])
+    case class Suggestion(word: String, index1: Double, index2: Double, index3: Double)
+    case class RestRequest(sentences: java.util.List[java.util.List[Any]], limit: Int, simple: Boolean = false)
 
-    @throws[NCE]
-    private def mkHandler(req: String): ResponseHandler[Seq[RestResponseBody]] =
+    private final val HANDLER: ResponseHandler[Seq[Seq[Suggestion]]] =
         (resp: HttpResponse) ⇒ {
             val code = resp.getStatusLine.getStatusCode
             val e = resp.getEntity
@@ -73,54 +73,73 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             val js = if (e != null) EntityUtils.toString(e) else null
 
             if (js == null)
-                throw new NCE(s"Unexpected empty response [req=$req, code=$code]")
+                throw new RuntimeException(s"Unexpected empty response [code=$code]")
 
             code match {
                 case 200 ⇒
-                    val data: RestResponse = GSON.fromJson(js, TYPE_RESP)
+                    val data: java.util.List[java.util.List[java.util.List[Any]]] = GSON.fromJson(js, TYPE_RESP)
 
-                    data.data.asScala
+                    data.asScala.map(p ⇒
+                        if (p.isEmpty)
+                            Seq.empty
+                        else
+                            p.asScala.tail.map(p ⇒
+                                Suggestion(
+                                    word = p.get(2).asInstanceOf[String],
+                                    index1 = p.get(0).asInstanceOf[Double],
+                                    index2 = p.get(1).asInstanceOf[Double],
+                                    index3 = p.get(3).asInstanceOf[Double]
+                                ),
+                            )
+                    )
 
-                case 400 ⇒ throw new NCE(js)
-                case _ ⇒ throw new NCE(s"Unexpected response [req=$req, code=$code, response=$js]")
+                case 400 ⇒ throw new RuntimeException(js)
+                case _ ⇒ throw new RuntimeException(s"Unexpected response [code=$code, response=$js]")
             }
         }
 
     @throws[NCE]
-    def suggest(sen: String, idx: Int, minScore: Double, limit: Int): Seq[NCContextWord] = {
+    def suggest(reqs: Seq[NCContextRequest], minScore: Double, limit: Int): Seq[Seq[NCContextWord]] = {
         require(url.isDefined)
 
-        val key: (String, Int) = (sen, idx)
+        val keys = reqs.map(p ⇒ (p.sentence, p.index))
+        val res = new scala.collection.mutable.LinkedHashMap[CacheKey, Seq[NCContextWord]]() ++
+            keys.map(key ⇒ key → cache.get(key))
+        val reqKeys = res.filter(_._2 == null).keys.toSeq
 
-        var res = cache.get(key)
-
-        if (res == null) {
-            val post = new HttpPost(url.get + "/synonyms")
+        if (reqKeys.nonEmpty) {
+            val post = new HttpPost(url.get + "/suggestions")
 
             post.setHeader("Content-Type", "application/json")
             post.setEntity(
                 new StringEntity(
-                    GSON.toJson(RestRequest(sentence = sen, simple = false, lower = idx, upper = idx, limit = limit)),
+                    GSON.toJson(
+                        RestRequest(
+                            sentences = reqKeys.map { case (sen, idx) ⇒ Seq(sen, idx).asJava }.asJava,
+                            limit = limit)
+                    ),
                     "UTF-8"
                 )
             )
 
-            val reqRes =
+            val resps: Seq[Seq[NCContextWord]] =
                 try
-                    CLIENT.execute(post, mkHandler(sen)).filter(_.score >= minScore).sortBy(-_.score)
+                    CLIENT.execute(post, HANDLER).
+                        map(_.map(p ⇒ NCContextWord(
+                            word = p.word, stem = NCNlpCoreManager.stemWord(p.word), score = p.index1)
+                        ))
                 finally
                     post.releaseConnection()
 
-            res = reqRes.map(p ⇒ NCContextWord(word = p.word, stem = NCNlpCoreManager.stemWord(p.word), score = p.score))
+            require(reqKeys.size == resps.size)
 
-            cache.put(key, res)
+            reqKeys.zip(resps).foreach { case (key, resp) ⇒
+                cache.put(key, resp)
+                res.update(key, resp)
+            }
         }
 
-//        logger.info(
-//            s"Request sent [text=$sen, idx=$idx, result=${res.map(p ⇒ s"${p.word}(${f(p.score)})").mkString(", ")}]"
-//        )
-//
-        res
+        res.values.toSeq
     }
 
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
@@ -194,16 +213,16 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
                         val txt = substitute(exWords, idxs.zip(comb).toMap)
 
-                        idxs.flatMap(i ⇒ suggest(txt, i, CONF_REQ_MIN_SCORE, CONF_REQ_LIMIT))
+                        suggest(idxs.map(i ⇒ NCContextRequest(txt, i)), CONF_REQ_MIN_SCORE, CONF_REQ_LIMIT)
                     })
-                }.
+                }.flatten.
                     toSeq.
                     //filter(_.word.forall(ch ⇒ ch.isLetter && ch.isLower)). // TODO:
                     groupBy(_.stem).
                     filter(_._2.size > n / 3.0). // Drop rare variants. TODO:
-                    map { case (_, seq) ⇒ seq.sortBy(-_.score).head → seq.map(_.score).sum}.
+                    map { case (_, seq) ⇒ seq.minBy(-_.score) → seq.map(_.score).sum}.
                     toSeq.
-                    sortBy { case(s, sumScore) ⇒ -sumScore}
+                    sortBy { case(_, sumScore) ⇒ -sumScore}
 
             val suggs = collection.mutable.ArrayBuffer.empty[NCContextWord]
 
@@ -212,8 +231,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             for ((s, sumScore) ← suggsSumScores if sum < maxSum) {
                 suggs += s
-
-                println("sum="+sum + ", s="+s)
 
                 sum += sumScore
             }
