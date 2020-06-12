@@ -154,5 +154,6 @@ object NCContextWordEnricher extends NCServerEnricher {
                         )
                     }
             }
+            case None ⇒ // No-op.
         }
 }
