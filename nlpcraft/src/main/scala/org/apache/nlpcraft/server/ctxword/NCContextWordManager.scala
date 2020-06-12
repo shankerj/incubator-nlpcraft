@@ -17,13 +17,15 @@
 
 package org.apache.nlpcraft.server.ctxword
 
+import java.net.ConnectException
+
 import com.google.common.util.concurrent.AtomicDouble
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import io.opencensus.trace.Span
 import org.apache.http.HttpResponse
 import org.apache.http.client.ResponseHandler
-import org.apache.http.client.methods.HttpPost
+import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.StringEntity
 import org.apache.http.impl.client.HttpClients
 import org.apache.http.util.EntityUtils
@@ -59,7 +61,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
-    @volatile private var cache: IgniteCache[NCContextRequest, Seq[NCContextWord]] = _
+    @volatile private var cache: IgniteCache[NCContextWordRequest, Seq[NCContextWord]] = _
 
     // TODO: do we need all fields?
     case class Suggestion(word: String, totalScore: Double, fastTextScore: Double, bertScore: Double)
@@ -100,23 +102,24 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         }
 
     @throws[NCE]
-    def suggest(reqs: Seq[NCContextRequest], minScore: Double, limit: Int): Seq[Seq[NCContextWord]] = {
+    def suggest(reqs: Seq[NCContextWordRequest], minScore: Double, limit: Int): Seq[Seq[NCContextWord]] = {
         require(url.isDefined)
 
-        val res = scala.collection.mutable.LinkedHashMap.empty[NCContextRequest, Seq[NCContextWord]] ++
+        val res = scala.collection.mutable.LinkedHashMap.empty[NCContextWordRequest, Seq[NCContextWord]] ++
             reqs.map(key ⇒ key → cache.get(key))
 
         val reqsSrv = res.filter { case (_, cachedWords) ⇒ cachedWords == null }.keys.toSeq
 
         if (reqsSrv.nonEmpty) {
-            val reqsSrvNorm: Seq[(String, Seq[Any])] =
-                reqsSrv.groupBy(_.sentence).
-                map { case (txt, seq) ⇒ txt → (Seq(txt) ++ seq.map(_.index).sorted) }.toSeq
+            val reqsSrvNorm: Seq[(Seq[String], Seq[Any])] =
+                reqsSrv.groupBy(_.words).
+                map { case (words, seq) ⇒ words → (Seq(words.mkString(" ")) ++ seq.map(_.wordIndex).sorted) }.toSeq
 
             require(reqsSrv.size == reqsSrvNorm.map(_._2.size - 1).sum)
 
-            val post = new HttpPost(url.get + "suggestions")
+            val post = new HttpPost(s"${url.get}suggestions")
 
+            // TODO: drop print
             println("!!limit="+limit)
             println("!!minScore="+minScore)
             println("!!reqsSrvNorm="+GSON.toJson(reqsSrvNorm.map(_._2.asJava).asJava))
@@ -141,9 +144,12 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             require(reqsSrv.size == resp.size)
 
             val reqsSrvDenorm =
-                reqsSrvNorm.flatMap { case (txt, vals) ⇒ vals.tail.map(idx ⇒ NCContextRequest(txt, idx.asInstanceOf[Int])) }
+                reqsSrvNorm.flatMap {
+                    case (txt, vals) ⇒ vals.tail.map(idx ⇒ NCContextWordRequest(txt, idx.asInstanceOf[Int]))
+                }
 
-            def sort(seq: Seq[NCContextRequest]): Seq[NCContextRequest] = seq.sortBy(p ⇒ (p.sentence, p.index))
+            def sort(seq: Seq[NCContextWordRequest]): Seq[NCContextWordRequest] =
+                seq.sortBy(p ⇒ (p.words.mkString(" "), p.wordIndex))
 
             require(sort(reqsSrvDenorm) == sort(reqsSrv))
 
@@ -171,12 +177,22 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
         catching(wrapIE) {
-            cache = ignite.cache[NCContextRequest, Seq[NCContextWord]]("ctxword-cache")
+            cache = ignite.cache[NCContextWordRequest, Seq[NCContextWord]]("ctxword-cache")
         }
 
         parser = NCNlpServerManager.getParser
         url = Config.url match {
-            case Some(u) ⇒ Some(if (u.last == '/') u else s"$u/")
+            case Some(u) ⇒
+                val uNorm = if (u.last == '/') u else s"$u/"
+
+                // It doesn't even check return code, just catch connection exception.
+                try
+                    HttpClients.createDefault.execute(new HttpGet(uNorm))
+                catch {
+                    case e: ConnectException ⇒ throw new NCE(s"Service is not available: $url", e)
+                }
+
+                Some(uNorm)
             case None ⇒ None
         }
 
@@ -189,11 +205,11 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         super.stop()
     }
 
-    private def substitute(words: Seq[String], subst: Map[Int, String]): String = {
+    private def substitute(words: Seq[String], subst: Map[Int, String]): Seq[String] = {
         require(words.size >= subst.size)
         require(subst.keys.forall(i ⇒ i >= 0 && i < words.length))
 
-        words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }.mkString(" ")
+        words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }
     }
 
     private def f(d: Double): String = "%1.3f" format d
@@ -208,7 +224,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
 
         val contextWords =
-            collection.mutable.HashMap.empty[String /*Element ID*/ , Map[String /*Context word stem*/ , Double /*Score*/]]
+            collection.mutable.HashMap.empty[String /*Element ID*/, Map[String /*Context word stem*/, Double /*Score*/]]
 
         val examplesCfg =
             collection.mutable.HashMap.empty[
@@ -217,7 +233,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
 
-        case class Holder(request: NCContextRequest, elementId: String, factor: Int)
+        case class Holder(request: NCContextWordRequest, elementId: String, factor: Int)
 
         val allReqs: Seq[Holder] =
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.values.flatten.toSet }.flatMap { case (elemId, allElemSyns) ⇒
@@ -243,9 +259,9 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     allElemSyns.toSeq.combinations(idxs.size).flatMap(comb ⇒ {
                         require(comb.size == idxs.size)
 
-                        val txt = substitute(exWords, idxs.zip(comb).toMap)
+                        val words = substitute(exWords, idxs.zip(comb).toMap)
 
-                        idxs.map(NCContextRequest(txt, _))
+                        idxs.map(NCContextWordRequest(words, _))
                     })
                 }.toSeq.map(req ⇒ Holder(req, elemId, n))
             }.toSeq

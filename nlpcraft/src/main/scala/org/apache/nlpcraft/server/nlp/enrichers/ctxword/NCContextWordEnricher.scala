@@ -17,23 +17,16 @@
 
 package org.apache.nlpcraft.server.nlp.enrichers.ctxword
 
-import java.net.ConnectException
-
 import io.opencensus.trace.Span
-import org.apache.http.client.methods.HttpGet
-import org.apache.http.impl.client.HttpClients
-import org.apache.nlpcraft.common.config.NCConfigurable
-import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote ⇒ Note, NCNlpSentenceToken ⇒ Token}
-import org.apache.nlpcraft.common.{NCE, NCService}
-import org.apache.nlpcraft.server.ctxword.{NCContextRequest, NCContextWord, NCContextWordManager}
-import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo ⇒ Config}
-    import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
+import org.apache.nlpcraft.common.NCService
+import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote => Note, NCNlpSentenceToken => Token}
+import org.apache.nlpcraft.server.ctxword.{NCContextWord, NCContextWordManager, NCContextWordRequest}
+import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo => Config}
+import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 
 import scala.collection.Map
 
 object NCContextWordEnricher extends NCServerEnricher {
-    @volatile private var url: String = _
-
     // TODO: score
     private final val MIN_SENTENCE_SCORE = 0.3
     private final val MIN_EXAMPLE_SCORE = 1
@@ -41,24 +34,7 @@ object NCContextWordEnricher extends NCServerEnricher {
 
     private case class Holder(elementId: String, value: String, score: Double)
 
-    private object Config extends NCConfigurable {
-        lazy val url: String = getStringOrElse("nlpcraft.server.ctxword.url", "http://localhost:5000")
-    }
-
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { span ⇒
-        url = Config.url
-
-        addTags(span, "url" → url)
-
-        // It doesn't even check return code, just catch connection exception.
-        try
-            HttpClients.createDefault.execute(new HttpGet(url))
-        catch {
-            case e: ConnectException ⇒ throw new NCE(s"Service is not available: $url", e)
-        }
-
-        logger.info(s"Context Word server connected: $url")
-
         super.start()
     }
 
@@ -77,10 +53,10 @@ object NCContextWordEnricher extends NCServerEnricher {
         }
 
     private def trySentence(cfg: Config, toks: Seq[Token], ns: NCNlpSentence): Map[Token, Holder] = {
-        val txt = ns.tokens.map(_.origText).mkString(" ")
+        val words = ns.tokens.map(_.origText)
 
         val allSuggs: Seq[Seq[NCContextWord]] =
-            NCContextWordManager.suggest(toks.map(t ⇒ NCContextRequest(txt, t.index)), MIN_SENTENCE_SCORE, LIMIT)
+            NCContextWordManager.suggest(toks.map(t ⇒ NCContextWordRequest(words, t.index)), MIN_SENTENCE_SCORE, LIMIT)
 
         require(toks.size == allSuggs.size)
 
@@ -98,15 +74,15 @@ object NCContextWordEnricher extends NCServerEnricher {
     private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
         case class Value(elementId: String, contextWords: Map[String, Double], token: Token)
 
-        val reqs = collection.mutable.ArrayBuffer.empty[(NCContextRequest, Value)]
+        val reqs = collection.mutable.ArrayBuffer.empty[(NCContextWordRequest, Value)]
 
         cfg.examples.foreach { case (elemId, examples) ⇒
             val contextWords = cfg.contextWords(elemId)
 
             for ((exampleWords, idxs) ← examples; tok ← toks) {
-                val txt = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
+                val words = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
 
-                idxs.map(i ⇒ reqs += NCContextRequest(txt, i) → Value(elemId, contextWords, tok))
+                idxs.map(i ⇒ reqs += NCContextWordRequest(words, i) → Value(elemId, contextWords, tok))
             }
         }
 
@@ -125,11 +101,11 @@ object NCContextWordEnricher extends NCServerEnricher {
             map { case (tok, seq) ⇒ tok → seq.map { case (_, h) ⇒ h }.minBy(-_.score) }
     }
 
-    private def substitute(words: Seq[String], subst: Map[Int, String]): String = {
+    private def substitute(words: Seq[String], subst: Map[Int, String]): Seq[String] = {
         require(words.size >= subst.size)
         require(subst.keys.forall(i ⇒ i >= 0 && i < words.length))
 
-        words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }.mkString(" ")
+        words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }
     }
 
     override def enrich(ns: NCNlpSentence, parent: Span): Unit =
@@ -148,14 +124,14 @@ object NCContextWordEnricher extends NCServerEnricher {
                     if (m.size != toks.size) {
                         val m1 = trySentence(cfg, getOther, ns)
 
-                        logger.info("!trySentence=" + m1)
+                        logger.info("!trySentence=" + m1) // TODO: drop print
 
                         m ++= m1
 
                         if (m.size != toks.size) {
                             val m2 = tryExamples(cfg, getOther)
 
-                            logger.info("!tryExamples=" + m2)
+                            logger.info("!tryExamples=" + m2) // TODO: drop print
 
                             m ++= m2
 

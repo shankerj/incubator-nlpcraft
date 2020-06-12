@@ -17,4 +17,6 @@
 
 package org.apache.nlpcraft.server.ctxword
 
-case class NCContextRequest(sentence: String, index: Int)
+case class NCContextWordRequest(words: Seq[String], wordIndex: Int) {
+    require(wordIndex >= 0 && wordIndex < words.size)
+}
