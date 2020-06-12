@@ -17,6 +17,7 @@
 
 package org.apache.nlpcraft.server.ctxword
 
+import com.google.common.util.concurrent.AtomicDouble
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import io.opencensus.trace.Span
@@ -140,7 +141,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             require(reqsSrv.size == resp.size)
 
             val reqsSrvDenorm =
-                reqsSrvNorm.flatMap { case (txt, vals) ⇒ vals.tail.map(idx ⇒ NCContextRequest(txt, idx.asInstanceOf[Int]))}
+                reqsSrvNorm.flatMap { case (txt, vals) ⇒ vals.tail.map(idx ⇒ NCContextRequest(txt, idx.asInstanceOf[Int])) }
 
             def sort(seq: Seq[NCContextRequest]): Seq[NCContextRequest] = seq.sortBy(p ⇒ (p.sentence, p.index))
 
@@ -216,24 +217,26 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
 
-        ctxSyns.map { case (elemId, map) ⇒ elemId → map.values.flatten.toSet }.foreach { case (elemId, allElemSyns) ⇒
-            val elemNormExs: Map[Seq[NCNlpWord], Seq[Int]] =
-                normExs.flatMap(e ⇒ {
-                    val indexes = e.zipWithIndex.flatMap {
-                        case (w, idx) ⇒ if (allElemSyns.contains(w.stem)) Some(idx) else None
-                    }
+        case class Holder(request: NCContextRequest, elementId: String, factor: Int)
 
-                    if (indexes.nonEmpty) Some(e → indexes) else None
-                }).toMap
+        val allReqs: Seq[Holder] =
+            ctxSyns.map { case (elemId, map) ⇒ elemId → map.values.flatten.toSet }.flatMap { case (elemId, allElemSyns) ⇒
+                val elemNormExs: Map[Seq[NCNlpWord], Seq[Int]] =
+                    normExs.flatMap(e ⇒ {
+                        val indexes = e.zipWithIndex.flatMap {
+                            case (w, idx) ⇒ if (allElemSyns.contains(w.stem)) Some(idx) else None
+                        }
 
-            if (elemNormExs.isEmpty)
-                throw new NCE(s"Examples not found for element: $elemId")
+                        if (indexes.nonEmpty) Some(e → indexes) else None
+                    }).toMap
 
-            examplesCfg += elemId → elemNormExs.map { case (ex, idxs) ⇒ ex.map(_.word) → idxs }.toMap
+                if (elemNormExs.isEmpty)
+                    throw new NCE(s"Examples not found for element: $elemId")
 
-            val n = elemNormExs.size * allElemSyns.size
+                examplesCfg += elemId → elemNormExs.map { case (ex, idxs) ⇒ ex.map(_.word) → idxs }.toMap
 
-            val suggsSumScores =
+                val n = elemNormExs.size * allElemSyns.size
+
                 elemNormExs.flatMap { case (ex, idxs) ⇒
                     val exWords = ex.map(_.word)
 
@@ -242,32 +245,35 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
                         val txt = substitute(exWords, idxs.zip(comb).toMap)
 
-                        suggest(idxs.map(i ⇒ NCContextRequest(txt, i)), CONF_REQ_MIN_SCORE, CONF_REQ_LIMIT)
+                        idxs.map(NCContextRequest(txt, _))
                     })
-                }.flatten.
-                    toSeq.
+                }.toSeq.map(req ⇒ Holder(req, elemId, n))
+            }.toSeq
+
+        val allResp = suggest(allReqs.map(_.request), CONF_REQ_MIN_SCORE, CONF_REQ_LIMIT)
+
+        require(allResp.size == allReqs.size)
+
+        allReqs.zip(allResp).foreach { case (h, suggs) ⇒
+            val suggsSumScores =
+                suggs.
                     //filter(_.word.forall(ch ⇒ ch.isLetter && ch.isLower)). // TODO:
                     groupBy(_.stem).
-                    filter(_._2.size > n / 3.0). // Drop rare variants. TODO:
+                    filter(_._2.size > h.factor / 3.0). // Drop rare variants. TODO:
                     map { case (_, seq) ⇒ seq.minBy(-_.score) → seq.map(_.score).sum}.
                     toSeq.
-                    sortBy { case(_, sumScore) ⇒ -sumScore}
+                    sortBy { case(_, sumScore) ⇒ -sumScore }
 
-            val suggs = collection.mutable.ArrayBuffer.empty[NCContextWord]
+            val maxSum = suggsSumScores.map { case (_, score) ⇒ score }.sum * 0.5
 
-            val maxSum = suggsSumScores.map(_._2).sum * 0.5
-            var sum = 0.0
+            val sum = new AtomicDouble(0.0)
 
-            for ((s, sumScore) ← suggsSumScores if sum < maxSum) {
-                suggs += s
+            val suggsNorm = for ((s, sumScore) ← suggsSumScores if sum.getAndAdd(sumScore) < maxSum) yield s
 
-                sum += sumScore
-            }
+            if (suggsNorm.isEmpty)
+                throw new NCE(s"Context words cannot be prepared for element: ${h.elementId}")
 
-            if (suggs.isEmpty)
-                throw new NCE(s"Context words cannot be prepared for element: $elemId")
-
-            contextWords += elemId → suggs.sortBy(-_.score).map(p ⇒ p.stem → p.score).toMap
+            contextWords += h.elementId → suggsNorm.sortBy(-_.score).map(p ⇒ p.stem → p.score).toMap
         }
 
         logger.whenInfoEnabled({
