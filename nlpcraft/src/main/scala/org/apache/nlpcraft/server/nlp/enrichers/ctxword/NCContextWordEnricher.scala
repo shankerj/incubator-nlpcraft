@@ -17,13 +17,17 @@
 
 package org.apache.nlpcraft.server.nlp.enrichers.ctxword
 
+import java.net.ConnectException
+
 import io.opencensus.trace.Span
-import org.apache.nlpcraft.common.NCService
+import org.apache.http.client.methods.HttpGet
+import org.apache.http.impl.client.HttpClients
 import org.apache.nlpcraft.common.config.NCConfigurable
-import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote, NCNlpSentenceToken}
+import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote ⇒ Note, NCNlpSentenceToken ⇒ Token}
+import org.apache.nlpcraft.common.{NCE, NCService}
 import org.apache.nlpcraft.server.ctxword.{NCContextRequest, NCContextWord, NCContextWordManager}
-import org.apache.nlpcraft.server.mdo.NCContextWordConfigMdo
-import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
+import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo ⇒ Config}
+    import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 
 import scala.collection.Map
 
@@ -32,7 +36,7 @@ object NCContextWordEnricher extends NCServerEnricher {
 
     // TODO: score
     private final val MIN_SENTENCE_SCORE = 0.3
-    private final val MIN_EXAMPLE_SCORE = 0.85
+    private final val MIN_EXAMPLE_SCORE = 1
     private final val LIMIT = 10
 
     private case class Holder(elementId: String, value: String, score: Double)
@@ -46,8 +50,12 @@ object NCContextWordEnricher extends NCServerEnricher {
 
         addTags(span, "url" → url)
 
-        // Tries to access spaCy proxy server.
-        // TODO: add health check.
+        // It doesn't even check return code, just catch connection exception.
+        try
+            HttpClients.createDefault.execute(new HttpGet(url))
+        catch {
+            case e: ConnectException ⇒ throw new NCE(s"Service is not available: $url", e)
+        }
 
         logger.info(s"Context Word server connected: $url")
 
@@ -58,7 +66,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         super.stop()
     }
 
-    private def tryDirect(cfg: NCContextWordConfigMdo, toks: Seq[NCNlpSentenceToken], score: Double): Map[NCNlpSentenceToken, Holder] =
+    private def tryDirect(cfg: Config, toks: Seq[Token], score: Double): Map[Token, Holder] =
         cfg.synonyms.flatMap { case (elemId, syns) ⇒
             toks.flatMap(t ⇒
                 syns.get(t.stem) match {
@@ -68,11 +76,7 @@ object NCContextWordEnricher extends NCServerEnricher {
             )
         }
 
-    private def trySentence(
-        cfg: NCContextWordConfigMdo,
-        toks: Seq[NCNlpSentenceToken],
-        ns: NCNlpSentence
-    ): Map[NCNlpSentenceToken, Holder] = {
+    private def trySentence(cfg: Config, toks: Seq[Token], ns: NCNlpSentence): Map[Token, Holder] = {
         val txt = ns.tokens.map(_.origText).mkString(" ")
 
         val allSuggs: Seq[Seq[NCContextWord]] =
@@ -91,8 +95,8 @@ object NCContextWordEnricher extends NCServerEnricher {
             }.toMap
     }
 
-    private def tryExamples(cfg: NCContextWordConfigMdo, toks: Seq[NCNlpSentenceToken]): Map[NCNlpSentenceToken, Holder] = {
-        case class Value(elementId: String, contextWords: Map[String, Double], token: NCNlpSentenceToken)
+    private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
+        case class Value(elementId: String, contextWords: Map[String, Double], token: Token)
 
         val reqs = collection.mutable.ArrayBuffer.empty[(NCContextRequest, Value)]
 
@@ -137,17 +141,29 @@ object NCContextWordEnricher extends NCServerEnricher {
 
                     var m = tryDirect(cfg, toks, cfg.contextWords.values.flatten.map { case (_, score) ⇒ score }.max * 10)
 
-                    def getOther: Seq[NCNlpSentenceToken] = toks.filter(t ⇒ !m.contains(t))
+                    logger.info("!direct=" + m)
+
+                    def getOther: Seq[Token] = toks.filter(t ⇒ !m.contains(t))
 
                     if (m.size != toks.size) {
-                        m ++= trySentence(cfg, getOther, ns)
+                        val m1 = trySentence(cfg, getOther, ns)
 
-                        if (m.size != toks.size)
-                            m ++= tryExamples(cfg, getOther)
+                        logger.info("!trySentence=" + m1)
+
+                        m ++= m1
+
+                        if (m.size != toks.size) {
+                            val m2 = tryExamples(cfg, getOther)
+
+                            logger.info("!tryExamples=" + m2)
+
+                            m ++= m2
+
+                        }
                     }
 
                     m.foreach { case (t, h) ⇒
-                        t.add(NCNlpSentenceNote(Seq(t.index), h.elementId, "value" → h.value, "score" → h.score))
+                        t.add(Note(Seq(t.index), h.elementId, "value" → h.value, "score" → h.score))
                     }
                 case None ⇒ // No-op.
             }

@@ -116,6 +116,10 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val post = new HttpPost(url.get + "suggestions")
 
+            println("!!limit="+limit)
+            println("!!minScore="+minScore)
+            println("!!reqsSrvNorm="+GSON.toJson(reqsSrvNorm.map(_._2.asJava).asJava))
+
             post.setHeader("Content-Type", "application/json")
             post.setEntity(
                 new StringEntity(
@@ -157,7 +161,11 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }
         }
 
-        res.values.toSeq
+        val resVals = res.values.toSeq
+
+        logger.info(s"Request [req=${reqs.mkString(", ")}, response=${resVals.map(_.mkString("|")).mkString(", ")}")
+
+        resVals
     }
 
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
