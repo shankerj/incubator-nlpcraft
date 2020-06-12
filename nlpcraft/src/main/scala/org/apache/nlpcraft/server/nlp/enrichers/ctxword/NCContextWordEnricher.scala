@@ -44,9 +44,6 @@ object NCContextWordEnricher extends NCServerEnricher {
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { span ⇒
         url = Config.url
 
-        if (url.last == '/')
-            url = url.dropRight(1)
-
         addTags(span, "url" → url)
 
         // Tries to access spaCy proxy server.
@@ -95,29 +92,33 @@ object NCContextWordEnricher extends NCServerEnricher {
     }
 
     private def tryExamples(cfg: NCContextWordConfigMdo, toks: Seq[NCNlpSentenceToken]): Map[NCNlpSentenceToken, Holder] = {
-        val reqs = collection.mutable.ArrayBuffer.empty[(NCContextRequest, (String, Map[String, Double], NCNlpSentenceToken))]
+        case class Value(elementId: String, contextWords: Map[String, Double], token: NCNlpSentenceToken)
+
+        val reqs = collection.mutable.ArrayBuffer.empty[(NCContextRequest, Value)]
 
         cfg.examples.foreach { case (elemId, examples) ⇒
-            val elemMets = cfg.contextWords(elemId)
+            val contextWords = cfg.contextWords(elemId)
 
-            for ((exampleWords, idxs) ← examples; t ← toks) {
-                val txt = substitute(exampleWords, idxs.map(_ → t.normText).toMap)
+            for ((exampleWords, idxs) ← examples; tok ← toks) {
+                val txt = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
 
-                idxs.map(i ⇒ reqs += NCContextRequest(txt, i) → (elemId, elemMets, t))
+                idxs.map(i ⇒ reqs += NCContextRequest(txt, i) → Value(elemId, contextWords, tok))
             }
         }
 
-        val allSuggs: Seq[Seq[NCContextWord]] = NCContextWordManager.suggest(reqs.map(_._1), MIN_EXAMPLE_SCORE, LIMIT)
+        val allSuggs = NCContextWordManager.suggest(reqs.map { case (req, _) ⇒ req }, MIN_EXAMPLE_SCORE, LIMIT)
 
         require(allSuggs.size == allSuggs.size)
 
-        reqs.map(_._2).
+        reqs.map { case (_, seq) ⇒ seq }.
             zip(allSuggs).
-            map { case ((elemId, elemMets, t), suggs) ⇒ (t, elemId) → suggs.filter(s ⇒ elemMets.contains(s.stem)) }.
-            filter(_._2.nonEmpty).
-            flatMap { case ((t, elemId), seq) ⇒ seq.map(p ⇒ t → Holder(elemId, t.normText, p.score)) }.
-            groupBy { case (t, _) ⇒ t }.
-            map { case (t, seq) ⇒ t → seq.map { case (_, h) ⇒ h }.minBy(-_.score) }
+            map { case (value, suggs) ⇒
+                (value.token, value.elementId) → suggs.filter(s ⇒ value.contextWords.contains(s.stem))
+            }.
+            filter { case (_, seq) ⇒ seq.nonEmpty }.
+            flatMap { case ((tok, elemId), seq) ⇒ seq.map(p ⇒ tok → Holder(elemId, tok.normText, p.score)) }.
+            groupBy { case (tok, _) ⇒ tok }.
+            map { case (tok, seq) ⇒ tok → seq.map { case (_, h) ⇒ h }.minBy(-_.score) }
     }
 
     private def substitute(words: Seq[String], subst: Map[Int, String]): String = {
@@ -134,26 +135,21 @@ object NCContextWordEnricher extends NCServerEnricher {
                     // TODO: other names.
                     val toks = ns.filter(_.pos.startsWith("N"))
 
-                    var m = tryDirect(cfg, toks, cfg.contextWords.values.flatten.map(_._2).max * 10)
+                    var m = tryDirect(cfg, toks, cfg.contextWords.values.flatten.map { case (_, score) ⇒ score }.max * 10)
+
+                    def getOther: Seq[NCNlpSentenceToken] = toks.filter(t ⇒ !m.contains(t))
 
                     if (m.size != toks.size) {
-                        m ++= trySentence(cfg, toks.filter(t ⇒ !m.contains(t)), ns)
+                        m ++= trySentence(cfg, getOther, ns)
 
                         if (m.size != toks.size)
-                            m ++= tryExamples(cfg, toks.filter(t ⇒ !m.contains(t)))
+                            m ++= tryExamples(cfg, getOther)
                     }
 
                     m.foreach { case (t, h) ⇒
-                        t.add(
-                            NCNlpSentenceNote(
-                                Seq(t.index),
-                                h.elementId,
-                                "value" → h.value,
-                                "score" → h.score
-                            )
-                        )
+                        t.add(NCNlpSentenceNote(Seq(t.index), h.elementId, "value" → h.value, "score" → h.score))
                     }
+                case None ⇒ // No-op.
             }
-            case None ⇒ // No-op.
         }
 }

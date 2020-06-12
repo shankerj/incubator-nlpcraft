@@ -56,14 +56,13 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     private final val CONF_REQ_LIMIT = 20
     private final val CONF_REQ_MIN_SCORE = 0.7
 
-    type CacheKey = (String, Int)
-
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
-    @volatile private var cache: IgniteCache[CacheKey, Seq[NCContextWord]] = _
+    @volatile private var cache: IgniteCache[NCContextRequest, Seq[NCContextWord]] = _
 
-    case class Suggestion(word: String, index1: Double, index2: Double, index3: Double)
-    case class RestRequest(sentences: java.util.List[java.util.List[Any]], limit: Int, simple: Boolean = false)
+    // TODO: do we need all fields?
+    case class Suggestion(word: String, totalScore: Double, fastTextScore: Double, bertScore: Double)
+    case class RestRequest(sentences: java.util.List[java.util.List[Any]], limit: Int, min_score: Double)
 
     private final val HANDLER: ResponseHandler[Seq[Seq[Suggestion]]] =
         (resp: HttpResponse) ⇒ {
@@ -83,13 +82,14 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                         if (p.isEmpty)
                             Seq.empty
                         else
+                            // Skips header.
                             p.asScala.tail.map(p ⇒
                                 Suggestion(
-                                    word = p.get(2).asInstanceOf[String],
-                                    index1 = p.get(0).asInstanceOf[Double],
-                                    index2 = p.get(1).asInstanceOf[Double],
-                                    index3 = p.get(3).asInstanceOf[Double]
-                                ),
+                                    word = p.get(0).asInstanceOf[String],
+                                    totalScore = p.get(1).asInstanceOf[Double],
+                                    fastTextScore = p.get(2).asInstanceOf[Double],
+                                    bertScore = p.get(3).asInstanceOf[Double]
+                                )
                             )
                     )
 
@@ -102,41 +102,59 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     def suggest(reqs: Seq[NCContextRequest], minScore: Double, limit: Int): Seq[Seq[NCContextWord]] = {
         require(url.isDefined)
 
-        val keys = reqs.map(p ⇒ (p.sentence, p.index))
-        val res = new scala.collection.mutable.LinkedHashMap[CacheKey, Seq[NCContextWord]]() ++
-            keys.map(key ⇒ key → cache.get(key))
-        val reqKeys = res.filter(_._2 == null).keys.toSeq
+        val res = scala.collection.mutable.LinkedHashMap.empty[NCContextRequest, Seq[NCContextWord]] ++
+            reqs.map(key ⇒ key → cache.get(key))
 
-        if (reqKeys.nonEmpty) {
-            val post = new HttpPost(url.get + "/suggestions")
+        val reqsSrv = res.filter { case (_, cachedWords) ⇒ cachedWords == null }.keys.toSeq
+
+        if (reqsSrv.nonEmpty) {
+            val reqsSrvNorm: Seq[(String, Seq[Any])] =
+                reqsSrv.groupBy(_.sentence).
+                map { case (txt, seq) ⇒ txt → (Seq(txt) ++ seq.map(_.index).sorted) }.toSeq
+
+            require(reqsSrv.size == reqsSrvNorm.map(_._2.size - 1).sum)
+
+            val post = new HttpPost(url.get + "suggestions")
 
             post.setHeader("Content-Type", "application/json")
             post.setEntity(
                 new StringEntity(
-                    GSON.toJson(
-                        RestRequest(
-                            sentences = reqKeys.map { case (sen, idx) ⇒ Seq(sen, idx).asJava }.asJava,
-                            limit = limit)
-                    ),
+                    GSON.toJson(RestRequest(reqsSrvNorm.map(_._2.asJava).asJava, limit, minScore)),
                     "UTF-8"
                 )
             )
 
-            val resps: Seq[Seq[NCContextWord]] =
+            val resp: Seq[Seq[NCContextWord]] =
                 try
                     CLIENT.execute(post, HANDLER).
-                        map(_.map(p ⇒ NCContextWord(
-                            word = p.word, stem = NCNlpCoreManager.stemWord(p.word), score = p.index1)
-                        ))
+                        map(_.map(p ⇒
+                            NCContextWord(word = p.word, stem = NCNlpCoreManager.stemWord(p.word), score = p.totalScore))
+                        )
                 finally
                     post.releaseConnection()
 
-            require(reqKeys.size == resps.size)
+            require(reqsSrv.size == resp.size)
 
-            reqKeys.zip(resps).foreach { case (key, resp) ⇒
-                cache.put(key, resp)
-                res.update(key, resp)
-            }
+            val reqsSrvDenorm =
+                reqsSrvNorm.flatMap { case (txt, vals) ⇒ vals.tail.map(idx ⇒ NCContextRequest(txt, idx.asInstanceOf[Int]))}
+
+            def sort(seq: Seq[NCContextRequest]): Seq[NCContextRequest] = seq.sortBy(p ⇒ (p.sentence, p.index))
+
+            require(sort(reqsSrvDenorm) == sort(reqsSrv))
+
+            resp.
+                zip(reqsSrvDenorm).
+                sortBy { case (_, req) ⇒
+                    val i = reqsSrv.indexOf(req)
+
+                    require(i >= 0)
+
+                    i
+                }.
+                foreach { case (seq, req) ⇒
+                    cache.put(req, seq)
+                    res.update(req, seq)
+                }
         }
 
         res.values.toSeq
@@ -144,11 +162,14 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
         catching(wrapIE) {
-            cache = ignite.cache[(String, Int), Seq[NCContextWord]]("ctxword-cache")
+            cache = ignite.cache[NCContextRequest, Seq[NCContextWord]]("ctxword-cache")
         }
 
         parser = NCNlpServerManager.getParser
-        url = Config.url
+        url = Config.url match {
+            case Some(u) ⇒ Some(if (u.last == '/') u else s"$u/")
+            case None ⇒ None
+        }
 
         super.start()
     }
