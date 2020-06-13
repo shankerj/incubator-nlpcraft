@@ -116,12 +116,20 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             require(reqsSrv.size == reqsSrvNorm.map(_._2.size - 1).sum)
 
-            val post = new HttpPost(s"${url.get}suggestions")
+            val post = new HttpPost(url.get)
 
             post.setHeader("Content-Type", "application/json")
             post.setEntity(
                 new StringEntity(
-                    GSON.toJson(RestRequest(reqsSrvNorm.map(_._2.asJava).asJava, f.limit, f.minTotalScore, f.minFtextScore, f.minBertScore)),
+                    GSON.toJson(
+                        RestRequest(
+                            sentences = reqsSrvNorm.map(_._2.asJava).asJava,
+                            limit = f.limit,
+                            min_score = f.minTotalScore,
+                            min_ftext = f.minFtextScore,
+                            min_bert = f.minBertScore
+                        )
+                    ),
                     "UTF-8"
                 )
             )
@@ -177,16 +185,19 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         parser = NCNlpServerManager.getParser
         url = Config.url match {
             case Some(u) ⇒
-                val uNorm = if (u.last == '/') u else s"$u/"
-
                 // It doesn't even check return code, just catch connection exception.
                 try
-                    HttpClients.createDefault.execute(new HttpGet(uNorm))
+                    HttpClients.createDefault.execute(new HttpGet(u))
                 catch {
-                    case e: ConnectException ⇒ throw new NCE(s"Service is not available: $url", e)
+                    case e: ConnectException ⇒ throw new NCE(s"Service is not available: $u", e)
                 }
 
-                Some(uNorm)
+                var x = u
+
+                if (x.last != '/')
+                    x = s"$x/"
+
+                Some(s"${x}suggestions")
             case None ⇒ None
         }
 
