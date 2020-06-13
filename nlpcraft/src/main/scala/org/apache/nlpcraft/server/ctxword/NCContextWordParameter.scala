@@ -21,13 +21,13 @@ package org.apache.nlpcraft.server.ctxword
   * Default ContextWord server parameters.
   *
   * @param limit
-  * @param minTotalScore
-  * @param minFtextScore
-  * @param minBertScore
+  * @param totalScore
+  * @param ftextScore
+  * @param bertScore
   */
-case class NCContextWordFactor(
+case class NCContextWordParameter(
     limit: Int = 10,
-    minTotalScore: Double = 0,
-    minFtextScore: Double = 0.25,
-    minBertScore: Double = 0
+    totalScore: Double = 0,
+    ftextScore: Double = 0.25,
+    bertScore: Double = 0
 )

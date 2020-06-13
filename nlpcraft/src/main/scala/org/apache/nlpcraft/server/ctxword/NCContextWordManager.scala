@@ -20,7 +20,7 @@ package org.apache.nlpcraft.server.ctxword
 import java.net.ConnectException
 
 import com.google.common.util.concurrent.AtomicDouble
-import com.google.gson.Gson
+import com.google.gson.{Gson, GsonBuilder}
 import com.google.gson.reflect.TypeToken
 import io.opencensus.trace.Span
 import org.apache.http.HttpResponse
@@ -50,21 +50,26 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         lazy val url: Option[String] = getStringOpt("nlpcraft.server.ctxword.url")
     }
 
-    private final val GSON = new Gson
+    private final val GSON = new Gson()
     private final val TYPE_RESP = new TypeToken[java.util.List[java.util.List[java.util.List[Any]]]]() {}.getType
     private final val CLIENT = HttpClients.createDefault
 
-    // TODO:CONF_REQ_MIN_SCORE
-    private final val CONF_REQ_LIMIT = 20
-    private final val CONF_REQ_MIN_SCORE = 0.7
+    private final val CONF_LIMIT = 20
+    private final val CONF_MIN_SCORE = 0.7
 
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
-    @volatile private var cache: IgniteCache[NCContextWordRequest, Seq[NCContextWord]] = _
+    @volatile private var cache: IgniteCache[NCContextWordRequest, Seq[NCContextWordResponse]] = _
 
-    // TODO: do we need all fields?
-    case class Suggestion(word: String, totalScore: Double, fastTextScore: Double, bertScore: Double)
-    case class RestRequest(sentences: java.util.List[java.util.List[Any]], limit: Int, min_score: Double, min_ftext: Double = 0, min_bert: Double = 0)
+    // We don't use directly bert and ftext indexes.
+    case class Suggestion(word: String, totalScore: Double)
+    case class RestRequest(
+        sentences: java.util.List[java.util.List[Any]],
+        limit: Int,
+        min_score: Double,
+        min_ftext: Double,
+        min_bert: Double
+    )
 
     private final val HANDLER: ResponseHandler[Seq[Seq[Suggestion]]] =
         (resp: HttpResponse) ⇒ {
@@ -88,9 +93,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                             p.asScala.tail.map(p ⇒
                                 Suggestion(
                                     word = p.get(0).asInstanceOf[String],
-                                    totalScore = p.get(1).asInstanceOf[Double],
-                                    fastTextScore = p.get(2).asInstanceOf[Double],
-                                    bertScore = p.get(3).asInstanceOf[Double]
+                                    totalScore = p.get(1).asInstanceOf[Double]
                                 )
                             )
                     )
@@ -101,10 +104,10 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         }
 
     @throws[NCE]
-    def suggest(reqs: Seq[NCContextWordRequest], f: NCContextWordFactor): Seq[Seq[NCContextWord]] = {
+    def suggest(reqs: Seq[NCContextWordRequest], f: NCContextWordParameter): Seq[Seq[NCContextWordResponse]] = {
         require(url.isDefined)
 
-        val res = scala.collection.mutable.LinkedHashMap.empty[NCContextWordRequest, Seq[NCContextWord]] ++
+        val res = scala.collection.mutable.LinkedHashMap.empty[NCContextWordRequest, Seq[NCContextWordResponse]] ++
             reqs.map(key ⇒ key → cache.get(key))
 
         val reqsSrv = res.filter { case (_, cachedWords) ⇒ cachedWords == null }.keys.toSeq
@@ -116,29 +119,25 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             require(reqsSrv.size == reqsSrvNorm.map(_._2.size - 1).sum)
 
+            val restReq =
+                RestRequest(
+                    sentences = reqsSrvNorm.map(_._2.asJava).asJava,
+                    limit = f.limit,
+                    min_score = f.totalScore,
+                    min_ftext = f.ftextScore,
+                    min_bert = f.bertScore
+                )
+
             val post = new HttpPost(url.get)
 
             post.setHeader("Content-Type", "application/json")
-            post.setEntity(
-                new StringEntity(
-                    GSON.toJson(
-                        RestRequest(
-                            sentences = reqsSrvNorm.map(_._2.asJava).asJava,
-                            limit = f.limit,
-                            min_score = f.minTotalScore,
-                            min_ftext = f.minFtextScore,
-                            min_bert = f.minBertScore
-                        )
-                    ),
-                    "UTF-8"
-                )
-            )
+            post.setEntity(new StringEntity(GSON.toJson(restReq), "UTF-8"))
 
-            val resp: Seq[Seq[NCContextWord]] =
+            val resp: Seq[Seq[NCContextWordResponse]] =
                 try
                     CLIENT.execute(post, HANDLER).
                         map(_.map(p ⇒
-                            NCContextWord(
+                            NCContextWordResponse(
                                 word = p.word,
                                 stem = NCNlpCoreManager.stemWord(p.word),
                                 totalScore = p.totalScore
@@ -174,16 +173,24 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }
         }
 
-        val resVals = res.values.toSeq
+        // TODO: level
+        logger.whenInfoEnabled({
+            logger.info(s"Request executed: \n${
+                new GsonBuilder().
+                    setPrettyPrinting().
+                    create.
+                    toJson(
+                        res.map { case (req, resp) ⇒ (req.words.mkString(" "), req.wordIndex) → resp.asJava } .asJava
+                    )
+            }")
+        })
 
-        logger.info(s"Request [req=${reqs.mkString(", ")}, response=${resVals.map(_.mkString("|")).mkString(", ")}")
-
-        resVals
+        res.values.toSeq
     }
 
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
         catching(wrapIE) {
-            cache = ignite.cache[NCContextWordRequest, Seq[NCContextWord]]("ctxword-cache")
+            cache = ignite.cache[NCContextWordRequest, Seq[NCContextWordResponse]]("ctxword-cache")
         }
 
         parser = NCNlpServerManager.getParser
@@ -216,8 +223,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }
     }
 
-    private def f(d: Double): String = "%1.3f" format d
-
     @throws[NCE]
     def makeContextWordConfig(
         mdlId: String,
@@ -232,7 +237,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val examplesCfg =
             collection.mutable.HashMap.empty[
-                String /*Element ID*/ , Map[Seq[String] /*Synonyms tokens*/ , Seq[Int] /*Positions to substitute*/]
+                String /*Element ID*/ , Map[Seq[String] /*Synonyms tokens*/, Seq[Int] /*Positions to substitute*/]
             ]
 
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
@@ -272,7 +277,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val allResp = suggest(
             allReqs.map(_.request),
-            NCContextWordFactor(limit = CONF_REQ_LIMIT, minTotalScore = CONF_REQ_MIN_SCORE)
+            NCContextWordParameter(limit = CONF_LIMIT, totalScore = CONF_MIN_SCORE)
         )
 
         require(allResp.size == allReqs.size)
@@ -289,7 +294,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val suggsSumScores =
                 suggs.
-                    //filter(_.word.forall(ch ⇒ ch.isLetter && ch.isLower)). // TODO:
                     groupBy(_.stem).
                     filter(_._2.size > factor / 3.0). // Drop rare variants. TODO:
                     map { case (_, seq) ⇒ seq.minBy(-_.totalScore) → seq.map(_.totalScore).sum}.
@@ -316,7 +320,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             contextWords.foreach { case (elemId, map) ⇒
                 tbl += (s"Element ID: '$elemId'", "")
 
-                map.toSeq.sortBy(-_._2).foreach { case (m, score) ⇒ tbl += (m, f(score)) }
+                map.toSeq.sortBy(-_._2).foreach { case (m, score) ⇒ tbl += (m, "%1.3f" format score) }
             }
 
             tbl.info(logger, Some(s"Context words for model: $mdlId"))
