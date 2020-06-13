@@ -40,7 +40,6 @@ import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCN
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 
 import scala.collection.JavaConverters._
-import scala.collection.Map
 import scala.util.control.Exception.catching
 
 /**
@@ -65,7 +64,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
     // TODO: do we need all fields?
     case class Suggestion(word: String, totalScore: Double, fastTextScore: Double, bertScore: Double)
-    case class RestRequest(sentences: java.util.List[java.util.List[Any]], limit: Int, min_score: Double)
+    case class RestRequest(sentences: java.util.List[java.util.List[Any]], limit: Int, min_score: Double, min_ftext: Double = 0, min_bert: Double = 0)
 
     private final val HANDLER: ResponseHandler[Seq[Seq[Suggestion]]] =
         (resp: HttpResponse) ⇒ {
@@ -102,7 +101,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         }
 
     @throws[NCE]
-    def suggest(reqs: Seq[NCContextWordRequest], minScore: Double, limit: Int): Seq[Seq[NCContextWord]] = {
+    def suggest(reqs: Seq[NCContextWordRequest], f: NCContextWordFactor): Seq[Seq[NCContextWord]] = {
         require(url.isDefined)
 
         val res = scala.collection.mutable.LinkedHashMap.empty[NCContextWordRequest, Seq[NCContextWord]] ++
@@ -119,15 +118,10 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val post = new HttpPost(s"${url.get}suggestions")
 
-            // TODO: drop print
-            println("!!limit="+limit)
-            println("!!minScore="+minScore)
-            println("!!reqsSrvNorm="+GSON.toJson(reqsSrvNorm.map(_._2.asJava).asJava))
-
             post.setHeader("Content-Type", "application/json")
             post.setEntity(
                 new StringEntity(
-                    GSON.toJson(RestRequest(reqsSrvNorm.map(_._2.asJava).asJava, limit, minScore)),
+                    GSON.toJson(RestRequest(reqsSrvNorm.map(_._2.asJava).asJava, f.limit, f.minTotalScore, f.minFtextScore, f.minBertScore)),
                     "UTF-8"
                 )
             )
@@ -249,9 +243,9 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 if (elemNormExs.isEmpty)
                     throw new NCE(s"Examples not found for element: $elemId")
 
-                examplesCfg += elemId → elemNormExs.map { case (ex, idxs) ⇒ ex.map(_.word) → idxs }.toMap
+                examplesCfg += elemId → elemNormExs.map { case (ex, idxs) ⇒ ex.map(_.word) → idxs }
 
-                val n = elemNormExs.size * allElemSyns.size
+                val multFactor = elemNormExs.size * allElemSyns.size
 
                 elemNormExs.flatMap { case (ex, idxs) ⇒
                     val exWords = ex.map(_.word)
@@ -263,19 +257,31 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
                         idxs.map(NCContextWordRequest(words, _))
                     })
-                }.toSeq.map(req ⇒ Holder(req, elemId, n))
+                }.toSeq.map(req ⇒ Holder(req, elemId, multFactor))
             }.toSeq
 
-        val allResp = suggest(allReqs.map(_.request), CONF_REQ_MIN_SCORE, CONF_REQ_LIMIT)
+        val allResp = suggest(
+            allReqs.map(_.request),
+            NCContextWordFactor(limit = CONF_REQ_LIMIT, minTotalScore = CONF_REQ_MIN_SCORE)
+        )
 
         require(allResp.size == allReqs.size)
 
-        allReqs.zip(allResp).foreach { case (h, suggs) ⇒
+        val groups = allReqs.zip(allResp).groupBy { case (h, _) ⇒ (h.elementId, h.factor) }
+
+        require(groups.size == ctxSyns.size)
+
+        groups.foreach { case ((elemId, factor), seq) ⇒
+            val suggs = seq.flatMap(_._2)
+
+            if (suggs.isEmpty)
+                throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
+
             val suggsSumScores =
                 suggs.
                     //filter(_.word.forall(ch ⇒ ch.isLetter && ch.isLower)). // TODO:
                     groupBy(_.stem).
-                    filter(_._2.size > h.factor / 3.0). // Drop rare variants. TODO:
+                    filter(_._2.size > factor / 3.0). // Drop rare variants. TODO:
                     map { case (_, seq) ⇒ seq.minBy(-_.score) → seq.map(_.score).sum}.
                     toSeq.
                     sortBy { case(_, sumScore) ⇒ -sumScore }
@@ -284,12 +290,12 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val sum = new AtomicDouble(0.0)
 
-            val suggsNorm = for ((s, sumScore) ← suggsSumScores if sum.getAndAdd(sumScore) < maxSum) yield s
+            var suggsNorm = for ((s, sumScore) ← suggsSumScores if sum.getAndAdd(sumScore) < maxSum) yield s
 
             if (suggsNorm.isEmpty)
-                throw new NCE(s"Context words cannot be prepared for element: ${h.elementId}")
+                suggsNorm = Seq(suggs.minBy(-_.score))
 
-            contextWords += h.elementId → suggsNorm.sortBy(-_.score).map(p ⇒ p.stem → p.score).toMap
+            contextWords += elemId → suggsNorm.sortBy(-_.score).map(p ⇒ p.stem → p.score).toMap
         }
 
         logger.whenInfoEnabled({
@@ -306,10 +312,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             tbl.info(logger, Some(s"Context words for model: $mdlId"))
         })
 
-        NCContextWordConfigMdo(
-            synonyms.toMap.map(p ⇒ p._1 → p._2.toMap),
-            contextWords.toMap.map(p ⇒ p._1 → p._2.toMap),
-            examplesCfg.toMap.map(p ⇒ p._1 → p._2.toMap)
-        )
+        NCContextWordConfigMdo(synonyms, contextWords.toMap, examplesCfg.toMap)
     }
 }

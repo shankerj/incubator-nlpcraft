@@ -20,7 +20,7 @@ package org.apache.nlpcraft.server.nlp.enrichers.ctxword
 import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.NCService
 import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote => Note, NCNlpSentenceToken => Token}
-import org.apache.nlpcraft.server.ctxword.{NCContextWord, NCContextWordManager, NCContextWordRequest}
+import org.apache.nlpcraft.server.ctxword.{NCContextWord, NCContextWordFactor, NCContextWordManager, NCContextWordRequest}
 import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo => Config}
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 
@@ -30,6 +30,10 @@ object NCContextWordEnricher extends NCServerEnricher {
     // TODO: score
     private final val MIN_SENTENCE_SCORE = 0.3
     private final val MIN_EXAMPLE_SCORE = 1
+
+    private final val MIN_SENTENCE_BERT = 0.3
+    private final val MIN_EXAMPLE_BERT = 0.5
+
     private final val LIMIT = 10
 
     private case class Holder(elementId: String, value: String, score: Double)
@@ -56,7 +60,10 @@ object NCContextWordEnricher extends NCServerEnricher {
         val words = ns.tokens.map(_.origText)
 
         val allSuggs: Seq[Seq[NCContextWord]] =
-            NCContextWordManager.suggest(toks.map(t ⇒ NCContextWordRequest(words, t.index)), MIN_SENTENCE_SCORE, LIMIT)
+            NCContextWordManager.suggest(
+                toks.map(t ⇒ NCContextWordRequest(words, t.index)),
+                NCContextWordFactor(limit = LIMIT, minTotalScore = MIN_SENTENCE_SCORE, minFtextScore = MIN_SENTENCE_BERT)
+            )
 
         require(toks.size == allSuggs.size)
 
@@ -86,7 +93,10 @@ object NCContextWordEnricher extends NCServerEnricher {
             }
         }
 
-        val allSuggs = NCContextWordManager.suggest(reqs.map { case (req, _) ⇒ req }, MIN_EXAMPLE_SCORE, LIMIT)
+        val allSuggs = NCContextWordManager.suggest(
+            reqs.map { case (req, _) ⇒ req },
+            NCContextWordFactor(limit = LIMIT, minTotalScore = MIN_EXAMPLE_SCORE, minFtextScore = MIN_EXAMPLE_BERT)
+        )
 
         require(allSuggs.size == allSuggs.size)
 
