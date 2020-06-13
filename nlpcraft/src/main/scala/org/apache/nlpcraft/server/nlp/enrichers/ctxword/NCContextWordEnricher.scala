@@ -92,12 +92,12 @@ object NCContextWordEnricher extends NCServerEnricher {
         val reqs = collection.mutable.ArrayBuffer.empty[(NCContextWordRequest, Value)]
 
         cfg.examples.foreach { case (elemId, examples) ⇒
-            val contextWords = cfg.contextWords(elemId)
+            val ctxWords = cfg.contextWords(elemId)
 
             for ((exampleWords, idxs) ← examples; tok ← toks) {
                 val words = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
 
-                idxs.map(i ⇒ reqs += NCContextWordRequest(words, i) → Value(elemId, contextWords, tok))
+                idxs.map(i ⇒ reqs += NCContextWordRequest(words, i) → Value(elemId, ctxWords, tok))
             }
         }
 
@@ -132,7 +132,7 @@ object NCContextWordEnricher extends NCServerEnricher {
                 case Some(cfg) ⇒
                     val toks = ns.filter(_.pos.startsWith("N"))
 
-                    def log(typ: String, m: Map[Token, Holder]): Unit =
+                    def logResults(typ: String, m: Map[Token, Holder]): Unit =
                         m.foreach { case (tok, h) ⇒
                             // TODO: log level.
                             logger.info(
@@ -142,21 +142,21 @@ object NCContextWordEnricher extends NCServerEnricher {
 
                     var m = tryDirect(cfg, toks, cfg.contextWords.values.flatten.map { case (_, score) ⇒ score }.max * 10)
 
-                    log("direct", m)
+                    logResults("direct", m)
 
                     def getOther: Seq[Token] = toks.filter(t ⇒ !m.contains(t))
 
                     if (m.size != toks.size) {
                         val m1 = trySentence(cfg, getOther, ns)
 
-                        log("sentence", m1)
+                        logResults("sentence", m1)
 
                         m ++= m1
 
                         if (m.size != toks.size) {
                             val m2 = tryExamples(cfg, getOther)
 
-                            log("examples", m2)
+                            logResults("examples", m2)
 
                             m ++= m2
                         }
