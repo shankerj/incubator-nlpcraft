@@ -70,9 +70,9 @@ object NCContextWordEnricher extends NCServerEnricher {
         toks.
             zip(allSuggs).
             flatMap { case (t, suggs) ⇒
-                suggs.sortBy(-_.score).flatMap(s ⇒
+                suggs.sortBy(-_.totalScore).flatMap(s ⇒
                     cfg.contextWords.find { case (_, mets) ⇒ mets.getOrElse(s.stem, 0.0) > MIN_SENTENCE_SCORE } match {
-                        case Some((elemId, _)) ⇒ Some(t → Holder(elemId, t.normText, s.score))
+                        case Some((elemId, _)) ⇒ Some(t → Holder(elemId, t.normText, s.totalScore))
                         case None ⇒ None
                     })
             }.toMap
@@ -106,7 +106,7 @@ object NCContextWordEnricher extends NCServerEnricher {
                 (value.token, value.elementId) → suggs.filter(s ⇒ value.contextWords.contains(s.stem))
             }.
             filter { case (_, seq) ⇒ seq.nonEmpty }.
-            flatMap { case ((tok, elemId), seq) ⇒ seq.map(p ⇒ tok → Holder(elemId, tok.normText, p.score)) }.
+            flatMap { case ((tok, elemId), seq) ⇒ seq.map(p ⇒ tok → Holder(elemId, tok.normText, p.totalScore)) }.
             groupBy { case (tok, _) ⇒ tok }.
             map { case (tok, seq) ⇒ tok → seq.map { case (_, h) ⇒ h }.minBy(-_.score) }
     }

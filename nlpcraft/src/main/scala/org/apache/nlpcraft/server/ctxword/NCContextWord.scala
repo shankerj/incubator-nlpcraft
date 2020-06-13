@@ -17,4 +17,4 @@
 
 package org.apache.nlpcraft.server.ctxword
 
-case class NCContextWord(word: String, stem: String, score: Double)
+case class NCContextWord(word: String, stem: String, totalScore: Double)

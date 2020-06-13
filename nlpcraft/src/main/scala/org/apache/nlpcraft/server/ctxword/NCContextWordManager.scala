@@ -138,7 +138,11 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 try
                     CLIENT.execute(post, HANDLER).
                         map(_.map(p ⇒
-                            NCContextWord(word = p.word, stem = NCNlpCoreManager.stemWord(p.word), score = p.totalScore))
+                            NCContextWord(
+                                word = p.word,
+                                stem = NCNlpCoreManager.stemWord(p.word),
+                                totalScore = p.totalScore
+                            ))
                         )
                 finally
                     post.releaseConnection()
@@ -192,12 +196,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     case e: ConnectException ⇒ throw new NCE(s"Service is not available: $u", e)
                 }
 
-                var x = u
-
-                if (x.last != '/')
-                    x = s"$x/"
-
-                Some(s"${x}suggestions")
+                Some(if (u.last == '/') s"${u}suggestions" else s"$u/suggestions")
             case None ⇒ None
         }
 
@@ -293,7 +292,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     //filter(_.word.forall(ch ⇒ ch.isLetter && ch.isLower)). // TODO:
                     groupBy(_.stem).
                     filter(_._2.size > factor / 3.0). // Drop rare variants. TODO:
-                    map { case (_, seq) ⇒ seq.minBy(-_.score) → seq.map(_.score).sum}.
+                    map { case (_, seq) ⇒ seq.minBy(-_.totalScore) → seq.map(_.totalScore).sum}.
                     toSeq.
                     sortBy { case(_, sumScore) ⇒ -sumScore }
 
@@ -304,9 +303,9 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             var suggsNorm = for ((s, sumScore) ← suggsSumScores if sum.getAndAdd(sumScore) < maxSum) yield s
 
             if (suggsNorm.isEmpty)
-                suggsNorm = Seq(suggs.minBy(-_.score))
+                suggsNorm = Seq(suggs.minBy(-_.totalScore))
 
-            contextWords += elemId → suggsNorm.sortBy(-_.score).map(p ⇒ p.stem → p.score).toMap
+            contextWords += elemId → suggsNorm.sortBy(-_.totalScore).map(p ⇒ p.stem → p.totalScore).toMap
         }
 
         logger.whenInfoEnabled({
