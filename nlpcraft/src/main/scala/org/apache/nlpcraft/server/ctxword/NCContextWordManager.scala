@@ -18,7 +18,7 @@
 package org.apache.nlpcraft.server.ctxword
 
 import java.net.ConnectException
-import java.util.{List ⇒ JList}
+import java.util.{List => JList}
 
 import com.google.gson.reflect.TypeToken
 import com.google.gson.{Gson, GsonBuilder}
@@ -54,8 +54,9 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     private final val TYPE_RESP = new TypeToken[JList[JList[Suggestion]]]() {}.getType
     private final val CLIENT = HttpClients.createDefault
 
-    private final val CONF_LIMIT = 20
-    private final val CONF_MIN_SCORE = 0.7
+    private final val CONF_LIMIT = 10
+    private final val CONF_SUM_LIMIT = 5
+    private final val CONF_MIN_SCORE = 0.8
 
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
@@ -225,8 +226,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         val synonyms =
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
 
-        val contextWords = collection.mutable.HashMap.empty[String /*Element ID*/, Set[String] /*Stems*/]
-
         val examplesCfg =
             collection.mutable.HashMap.empty[
                 String /*Element ID*/ , Map[Seq[String] /*Synonyms tokens*/, Seq[Int] /*Positions to substitute*/]
@@ -234,7 +233,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
 
-        case class Holder(request: NCContextWordRequest, elementId: String, factor: Int)
+        case class Holder(request: NCContextWordRequest, elementId: String)
 
         val allReqs: Seq[Holder] =
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.values.flatten.toSet }.flatMap { case (elemId, allElemSyns) ⇒
@@ -252,8 +251,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
                 examplesCfg += elemId → elemNormExs.map { case (ex, idxs) ⇒ ex.map(_.word) → idxs }
 
-                val multFactor = elemNormExs.size * allElemSyns.size
-
                 elemNormExs.flatMap { case (ex, idxs) ⇒
                     val exWords = ex.map(_.word)
 
@@ -264,7 +261,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
                         idxs.map(NCContextWordRequest(words, _))
                     })
-                }.toSeq.map(req ⇒ Holder(req, elemId, multFactor))
+                }.toSeq.map(req ⇒ Holder(req, elemId))
             }.toSeq
 
         val allResp = suggest(
@@ -274,43 +271,48 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         require(allResp.size == allReqs.size)
 
-        val groupsByElem = allReqs.zip(allResp).groupBy { case (h, _) ⇒ (h.elementId, h.factor) }
+        case class Group(word: NCContextWordResponse, count: Int)
+        case class GroupFactor(group: Group, factor: Double)
 
-        require(groupsByElem.size == ctxSyns.size)
+        val groups =
+            allReqs.zip(allResp).groupBy { case (h, _) ⇒ h.elementId }.map { case (elemId, seq) ⇒
+                val suggs = seq.flatMap { case (_, seq) ⇒ seq }
 
-        groupsByElem.foreach { case ((elemId, factor), seq) ⇒
-            val suggs = seq.flatMap { case (_, seq) ⇒ seq }
+                if (suggs.isEmpty)
+                    throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
 
-            if (suggs.isEmpty)
-                throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
-
-            val top = suggs.groupBy(_.stem).map { case (_, group) ⇒
-                val best = group.minBy(-_.totalScore)
-
-                best → (group.size, best.totalScore)
-                // TODO:
-            }.toSeq.sortBy( p ⇒ (-p._2._1, -p._2._2)).take(10)
-
-            // TODO:
-            println("TOP:" + top)
-
-            contextWords += elemId → top.map(_._1).map(_.stem).toSet
-        }
+                elemId →
+                    suggs.
+                        groupBy(_.stem).
+                        map { case (_, group) ⇒ Group(group.minBy(-_.totalScore), group.size) }.
+                        toSeq.
+                        map(group ⇒ GroupFactor(group, group.word.totalScore * group.count / suggs.size)).
+                        sortBy(-_.factor).
+                        take(CONF_SUM_LIMIT)
+            }
 
         logger.whenInfoEnabled({
             val tbl = NCAsciiTable()
 
-            tbl #= "Context word"
+            tbl #= ("Context word", "ContextWord score", "Count", "Total score")
 
-            contextWords.foreach { case (elemId, set) ⇒
-                tbl += s"Element ID: '$elemId'"
+            groups.foreach { case (elemId, elemGroups) ⇒
+                tbl += (s"Element ID: '$elemId'", "", "", "")
 
-                set.foreach(s ⇒ tbl += s)
+                def f(d: Double): String = "%1.3f" format d
+
+                elemGroups.
+                    sortBy(-_.factor).
+                    foreach(g ⇒ tbl += (g.group.word.word, f(g.group.word.totalScore), g.group.count, f(g.factor)))
             }
 
             tbl.info(logger, Some(s"Context words for model: $mdlId"))
         })
 
-        NCContextWordConfigMdo(synonyms, contextWords.toMap, examplesCfg.toMap)
+        NCContextWordConfigMdo(
+            synonyms,
+            groups.map { case (elemId, seq) ⇒ elemId → seq.map(_.group.word.stem).toSet },
+            examplesCfg.toMap
+        )
     }
 }

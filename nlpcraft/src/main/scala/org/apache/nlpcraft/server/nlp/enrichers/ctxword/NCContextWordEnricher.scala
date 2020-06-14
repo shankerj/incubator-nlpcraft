@@ -33,7 +33,7 @@ object NCContextWordEnricher extends NCServerEnricher {
     private final val MIN_EXAMPLE_SCORE = 1
     private final val MIN_EXAMPLE_BERT = 0.5
 
-    private final val LIMIT = 10
+    private final val LIMIT = 20
 
     private case class Holder(elementId: String, stem: String, value: String, score: Double, bertScore: Option[Double] = None, ftextScore: Option[Double] = None) {
         override def toString: String = {
@@ -150,7 +150,7 @@ object NCContextWordEnricher extends NCServerEnricher {
                             )
                         }
 
-                    var m = tryDirect(cfg, toks, 10) // TODO: score
+                    var m = tryDirect(cfg, toks, Integer.MAX_VALUE)
 
                     logResults("direct", m)
 
