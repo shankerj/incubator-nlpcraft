@@ -43,7 +43,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.Exception.catching
 
 /**
-  * TODO:
+  *
   */
 object NCContextWordManager extends NCService with NCOpenCensusServerStats with NCIgniteInstance {
     private object Config extends NCConfigurable {
@@ -167,7 +167,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }
         }
 
-        // TODO: level
         logger.whenInfoEnabled({
             logger.info(s"Request executed: \n${
                 new GsonBuilder().

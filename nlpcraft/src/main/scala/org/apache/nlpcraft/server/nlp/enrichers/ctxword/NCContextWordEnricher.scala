@@ -27,15 +27,22 @@ import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 import scala.collection.Map
 
 object NCContextWordEnricher extends NCServerEnricher {
-    private final val MIN_SENTENCE_SCORE = 0.3
-    private final val MIN_SENTENCE_BERT = 0.4
+    private final val MIN_SENTENCE_SCORE = 0.5
+    private final val MIN_SENTENCE_FTEXT = 0.5
 
     private final val MIN_EXAMPLE_SCORE = 1
-    private final val MIN_EXAMPLE_BERT = 0.5
+    private final val MIN_EXAMPLE_FTEXT = 0.1
 
     private final val LIMIT = 20
 
-    private case class Holder(elementId: String, stem: String, value: String, score: Double, bertScore: Option[Double] = None, ftextScore: Option[Double] = None) {
+    private case class Holder(
+        elementId: String,
+        stem: String,
+        value: String,
+        score: Double,
+        bertScore: Option[Double] = None,
+        ftextScore: Option[Double] = None
+    ) {
         override def toString: String = {
             var s = s"ElementId=$elementId, stem=$stem, value=$value, score=$score"
 
@@ -77,7 +84,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         val suggs: Seq[Seq[NCContextWordResponse]] =
             NCContextWordManager.suggest(
                 toks.map(t ⇒ NCContextWordRequest(words, t.index)),
-                NCContextWordParameter(limit = LIMIT, totalScore = MIN_SENTENCE_SCORE, ftextScore = MIN_SENTENCE_BERT)
+                NCContextWordParameter(limit = LIMIT, totalScore = MIN_SENTENCE_SCORE, ftextScore = MIN_SENTENCE_FTEXT)
             )
 
         require(toks.size == suggs.size)
@@ -87,7 +94,17 @@ object NCContextWordEnricher extends NCServerEnricher {
                 suggs.sortBy(-_.totalScore).flatMap(sugg ⇒
                     cfg.contextWords.toStream.flatMap { case (elemId, stems) ⇒
                         if (stems.contains(sugg.stem))
-                            Some(tok → Holder(elemId, sugg.stem, tok.normText, sugg.totalScore, Some(sugg.bertScore), Some(sugg.ftextScore)))
+                            Some(
+                                tok →
+                                    Holder(
+                                        elementId = elemId,
+                                        stem = sugg.stem,
+                                        value = tok.normText,
+                                        score = sugg.totalScore,
+                                        bertScore = Some(sugg.bertScore),
+                                        ftextScore = Some(sugg.ftextScore)
+                                    )
+                            )
                         else
                             None
                     }).headOption
@@ -95,7 +112,7 @@ object NCContextWordEnricher extends NCServerEnricher {
     }
 
     private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
-        case class Value(elementId: String, contextWords: Set[String], token: Token)
+        case class Value(elementId: String, contextWords: Set[String], token: Token, examplesCount: Int)
 
         val reqs = collection.mutable.ArrayBuffer.empty[(NCContextWordRequest, Value)]
 
@@ -105,25 +122,41 @@ object NCContextWordEnricher extends NCServerEnricher {
             for ((exampleWords, idxs) ← examples; tok ← toks) {
                 val words = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
 
-                idxs.map(i ⇒ reqs += NCContextWordRequest(words, i) → Value(elemId, ctxWords, tok))
+                idxs.map(i ⇒ reqs += NCContextWordRequest(words, i) → Value(elemId, ctxWords, tok, examples.size))
             }
         }
 
         val allSuggs = NCContextWordManager.suggest(
             reqs.map { case (req, _) ⇒ req },
-            NCContextWordParameter(limit = LIMIT, totalScore = MIN_EXAMPLE_SCORE, ftextScore = MIN_EXAMPLE_BERT)
+            NCContextWordParameter(limit = LIMIT, totalScore = MIN_EXAMPLE_SCORE, ftextScore = MIN_EXAMPLE_FTEXT)
         )
 
         require(allSuggs.size == allSuggs.size)
 
-        reqs.map { case (_, seq) ⇒ seq }.
+        reqs.map { case (_, value) ⇒ value }.
             zip(allSuggs).
-            map { case (value, suggs) ⇒
-                (value.token, value.elementId) → suggs.filter(s ⇒ value.contextWords.contains(s.stem))
+            // TODO:
+            flatMap { case (value, suggs) ⇒
+                val filtSuggs = suggs.filter(s ⇒ value.contextWords.contains(s.stem))
+
+//                if (filtSuggs.size == value.examplesCount)
+                    Some((value.token, value.elementId) → filtSuggs)
+//                else
+//                    None
             }.
-            filter { case (_, seq) ⇒ seq.nonEmpty }.
             flatMap {
-                case ((tok, elemId), seq) ⇒ seq.map(sugg ⇒ tok → Holder(elemId, sugg.stem, tok.normText, sugg.totalScore, Some(sugg.bertScore), Some(sugg.ftextScore)))
+                case ((tok, elemId), seq) ⇒
+                    seq.map(sugg ⇒
+                        tok →
+                            Holder(
+                                elementId = elemId,
+                                stem = sugg.stem,
+                                value = tok.normText,
+                                score = sugg.totalScore,
+                                bertScore = Some(sugg.bertScore),
+                                ftextScore = Some(sugg.ftextScore)
+                            )
+                    )
             }.
             groupBy { case (tok, _) ⇒ tok }.
             map { case (tok, seq) ⇒ tok → seq.map { case (_, h) ⇒ h }.minBy(-_.score) }
@@ -144,7 +177,6 @@ object NCContextWordEnricher extends NCServerEnricher {
 
                     def logResults(typ: String, m: Map[Token, Holder]): Unit =
                         m.foreach { case (tok, h) ⇒
-                            // TODO: log level.
                             logger.info(
                                 s"Token detected [index=${tok.index}, text=${tok.origText}, detected=$typ, data=$h"
                             )
