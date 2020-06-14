@@ -39,6 +39,8 @@ import org.apache.nlpcraft.server.mdo.NCContextWordConfigMdo
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 
+import java.util.{List ⇒ JList}
+
 import scala.collection.JavaConverters._
 import scala.util.control.Exception.catching
 
@@ -51,7 +53,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     }
 
     private final val GSON = new Gson()
-    private final val TYPE_RESP = new TypeToken[java.util.List[java.util.List[java.util.List[Any]]]]() {}.getType
+    private final val TYPE_RESP = new TypeToken[JList[JList[Suggestion]]]() {}.getType
     private final val CLIENT = HttpClients.createDefault
 
     private final val CONF_LIMIT = 20
@@ -62,9 +64,10 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     @volatile private var cache: IgniteCache[NCContextWordRequest, Seq[NCContextWordResponse]] = _
 
     // We don't use directly bert and ftext indexes.
-    case class Suggestion(word: String, totalScore: Double)
+    case class Suggestion(word: String, score: Double)
+    case class RestSentence(text: String, indexes: JList[Int])
     case class RestRequest(
-        sentences: java.util.List[java.util.List[Any]],
+        sentences: JList[RestSentence],
         limit: Int,
         min_score: Double,
         min_ftext: Double,
@@ -83,20 +86,10 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             code match {
                 case 200 ⇒
-                    val data: java.util.List[java.util.List[java.util.List[Any]]] = GSON.fromJson(js, TYPE_RESP)
+                    val data: JList[JList[Suggestion]] = GSON.fromJson(js, TYPE_RESP)
 
-                    data.asScala.map(p ⇒
-                        if (p.isEmpty)
-                            Seq.empty
-                        else
-                            // Skips header.
-                            p.asScala.tail.map(p ⇒
-                                Suggestion(
-                                    word = p.get(0).asInstanceOf[String],
-                                    totalScore = p.get(1).asInstanceOf[Double]
-                                )
-                            )
-                    )
+                    // Skips header.
+                    data.asScala.map(p ⇒ if (p.isEmpty) Seq.empty else p.asScala.tail)
 
                 case 400 ⇒ throw new RuntimeException(js)
                 case _ ⇒ throw new RuntimeException(s"Unexpected response [code=$code, response=$js]")
@@ -113,15 +106,17 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         val reqsSrv = res.filter { case (_, cachedWords) ⇒ cachedWords == null }.keys.toSeq
 
         if (reqsSrv.nonEmpty) {
-            val reqsSrvNorm: Seq[(Seq[String], Seq[Any])] =
+            val reqsSrvNorm: Seq[(Seq[String], RestSentence)] =
                 reqsSrv.groupBy(_.words).
-                map { case (words, seq) ⇒ words → (Seq(words.mkString(" ")) ++ seq.map(_.wordIndex).sorted) }.toSeq
+                map {
+                    case (words, seq) ⇒ words → RestSentence(words.mkString(" "), seq.map(_.wordIndex).sorted.asJava)
+                }.toSeq
 
-            require(reqsSrv.size == reqsSrvNorm.map(_._2.size - 1).sum)
+            require(reqsSrv.size == reqsSrvNorm.map(_._2.indexes.size).sum)
 
             val restReq =
                 RestRequest(
-                    sentences = reqsSrvNorm.map(_._2.asJava).asJava,
+                    sentences = reqsSrvNorm.map { case (_, restSen) ⇒ restSen }.asJava,
                     limit = f.limit,
                     min_score = f.totalScore,
                     min_ftext = f.ftextScore,
@@ -140,7 +135,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                             NCContextWordResponse(
                                 word = p.word,
                                 stem = NCNlpCoreManager.stemWord(p.word),
-                                totalScore = p.totalScore
+                                totalScore = p.score
                             ))
                         )
                 finally
@@ -149,9 +144,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             require(reqsSrv.size == resp.size)
 
             val reqsSrvDenorm =
-                reqsSrvNorm.flatMap {
-                    case (txt, vals) ⇒ vals.tail.map(idx ⇒ NCContextWordRequest(txt, idx.asInstanceOf[Int]))
-                }
+                reqsSrvNorm.flatMap { case (txt, sen) ⇒ sen.indexes.asScala.map(NCContextWordRequest(txt, _)) }
 
             def sort(seq: Seq[NCContextWordRequest]): Seq[NCContextWordRequest] =
                 seq.sortBy(p ⇒ (p.words.mkString(" "), p.wordIndex))
@@ -224,7 +217,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     }
 
     @throws[NCE]
-    def makeContextWordConfig(
+    def makeConfig(
         mdlId: String,
         ctxSyns: Map[String /*Element ID*/ , Map[String /*Value*/, Set[String] /*Values synonyms stems*/ ]],
         examples: Set[String]

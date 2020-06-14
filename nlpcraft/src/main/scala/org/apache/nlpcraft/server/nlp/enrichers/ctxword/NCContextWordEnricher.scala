@@ -27,11 +27,10 @@ import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 import scala.collection.Map
 
 object NCContextWordEnricher extends NCServerEnricher {
-    // TODO: score
     private final val MIN_SENTENCE_SCORE = 0.3
-    private final val MIN_EXAMPLE_SCORE = 1
-
     private final val MIN_SENTENCE_BERT = 0.3
+
+    private final val MIN_EXAMPLE_SCORE = 1
     private final val MIN_EXAMPLE_BERT = 0.5
 
     private final val LIMIT = 10

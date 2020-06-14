@@ -634,7 +634,7 @@ object NCProbeManager extends NCService {
                                     enabledBuiltInTokens = m.enabledBuiltInTokens,
                                     ctxWordsConfig =
                                         if (m.ctxSynonyms.nonEmpty)
-                                            Some(NCContextWordManager.makeContextWordConfig(m.id, m.ctxSynonyms, m.examples))
+                                            Some(NCContextWordManager.makeConfig(m.id, m.ctxSynonyms, m.examples))
                                         else
                                             None
                                 )
