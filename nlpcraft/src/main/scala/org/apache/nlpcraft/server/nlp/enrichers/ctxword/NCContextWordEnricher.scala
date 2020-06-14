@@ -28,15 +28,29 @@ import scala.collection.Map
 
 object NCContextWordEnricher extends NCServerEnricher {
     private final val MIN_SENTENCE_SCORE = 0.3
-    private final val MIN_SENTENCE_BERT = 0.3
+    private final val MIN_SENTENCE_BERT = 0.4
 
     private final val MIN_EXAMPLE_SCORE = 1
     private final val MIN_EXAMPLE_BERT = 0.5
 
     private final val LIMIT = 10
 
-    private case class Holder(elementId: String, stem: String, value: String, score: Double) {
-        override def toString: String = s"ElementId=$elementId, stem=$stem, value=$value, score=$score"
+    private case class Holder(elementId: String, stem: String, value: String, score: Double, bertScore: Option[Double] = None, ftextScore: Option[Double] = None) {
+        override def toString: String = {
+            var s = s"ElementId=$elementId, stem=$stem, value=$value, score=$score"
+
+            bertScore match {
+                case Some(score) ⇒ s = s"$s, bertScore=$score"
+                case None ⇒ // No-op.
+            }
+
+            ftextScore match {
+                case Some(score) ⇒ s = s"$s, ftextScore=$score"
+                case None ⇒ // No-op.
+            }
+
+            s
+        }
     }
 
     override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { span ⇒
@@ -71,22 +85,17 @@ object NCContextWordEnricher extends NCServerEnricher {
         toks.zip(suggs).
             flatMap { case (tok, suggs) ⇒
                 suggs.sortBy(-_.totalScore).flatMap(sugg ⇒
-                    cfg.contextWords.toStream.flatMap { case (elemId, mets) ⇒
-                        mets.get(sugg.stem) match {
-                            case Some(score) ⇒
-                                // TODO: sugg.totalScore vs score from mets
-                                if (score >= MIN_SENTENCE_SCORE)
-                                    Some(tok → Holder(elemId, sugg.stem, tok.normText, sugg.totalScore))
-                                else
-                                    None
-                            case None ⇒ None
-                        }
+                    cfg.contextWords.toStream.flatMap { case (elemId, stems) ⇒
+                        if (stems.contains(sugg.stem))
+                            Some(tok → Holder(elemId, sugg.stem, tok.normText, sugg.totalScore, Some(sugg.bertScore), Some(sugg.ftextScore)))
+                        else
+                            None
                     }).headOption
             }.toMap
     }
 
     private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
-        case class Value(elementId: String, contextWords: Map[String, Double], token: Token)
+        case class Value(elementId: String, contextWords: Set[String], token: Token)
 
         val reqs = collection.mutable.ArrayBuffer.empty[(NCContextWordRequest, Value)]
 
@@ -113,7 +122,9 @@ object NCContextWordEnricher extends NCServerEnricher {
                 (value.token, value.elementId) → suggs.filter(s ⇒ value.contextWords.contains(s.stem))
             }.
             filter { case (_, seq) ⇒ seq.nonEmpty }.
-            flatMap { case ((tok, elemId), seq) ⇒ seq.map(p ⇒ tok → Holder(elemId, p.stem, tok.normText, p.totalScore)) }.
+            flatMap {
+                case ((tok, elemId), seq) ⇒ seq.map(sugg ⇒ tok → Holder(elemId, sugg.stem, tok.normText, sugg.totalScore, Some(sugg.bertScore), Some(sugg.ftextScore)))
+            }.
             groupBy { case (tok, _) ⇒ tok }.
             map { case (tok, seq) ⇒ tok → seq.map { case (_, h) ⇒ h }.minBy(-_.score) }
     }
@@ -139,7 +150,7 @@ object NCContextWordEnricher extends NCServerEnricher {
                             )
                         }
 
-                    var m = tryDirect(cfg, toks, cfg.contextWords.values.flatten.map { case (_, score) ⇒ score }.max * 10)
+                    var m = tryDirect(cfg, toks, 10) // TODO: score
 
                     logResults("direct", m)
 

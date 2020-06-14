@@ -18,10 +18,10 @@
 package org.apache.nlpcraft.server.ctxword
 
 import java.net.ConnectException
+import java.util.{List ⇒ JList}
 
-import com.google.common.util.concurrent.AtomicDouble
-import com.google.gson.{Gson, GsonBuilder}
 import com.google.gson.reflect.TypeToken
+import com.google.gson.{Gson, GsonBuilder}
 import io.opencensus.trace.Span
 import org.apache.http.HttpResponse
 import org.apache.http.client.ResponseHandler
@@ -38,8 +38,6 @@ import org.apache.nlpcraft.server.ignite.NCIgniteInstance
 import org.apache.nlpcraft.server.mdo.NCContextWordConfigMdo
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
-
-import java.util.{List ⇒ JList}
 
 import scala.collection.JavaConverters._
 import scala.util.control.Exception.catching
@@ -64,7 +62,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     @volatile private var cache: IgniteCache[NCContextWordRequest, Seq[NCContextWordResponse]] = _
 
     // We don't use directly bert and ftext indexes.
-    case class Suggestion(word: String, score: Double)
+    case class Suggestion(word: String, score: Double, bert_score: Double, ftext_score: Double)
     case class RestSentence(text: String, indexes: JList[Int])
     case class RestRequest(
         sentences: JList[RestSentence],
@@ -135,7 +133,9 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                             NCContextWordResponse(
                                 word = p.word,
                                 stem = NCNlpCoreManager.stemWord(p.word),
-                                totalScore = p.score
+                                totalScore = p.score,
+                                bertScore = p.bert_score,
+                                ftextScore = p.ftext_score
                             ))
                         )
                 finally
@@ -225,8 +225,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         val synonyms =
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
 
-        val contextWords =
-            collection.mutable.HashMap.empty[String /*Element ID*/, Map[String /*Context word stem*/, Double /*Score*/]]
+        val contextWords = collection.mutable.HashMap.empty[String /*Element ID*/, Set[String] /*Stems*/]
 
         val examplesCfg =
             collection.mutable.HashMap.empty[
@@ -275,45 +274,38 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         require(allResp.size == allReqs.size)
 
-        val groups = allReqs.zip(allResp).groupBy { case (h, _) ⇒ (h.elementId, h.factor) }
+        val groupsByElem = allReqs.zip(allResp).groupBy { case (h, _) ⇒ (h.elementId, h.factor) }
 
-        require(groups.size == ctxSyns.size)
+        require(groupsByElem.size == ctxSyns.size)
 
-        groups.foreach { case ((elemId, factor), seq) ⇒
-            val suggs = seq.flatMap(_._2)
+        groupsByElem.foreach { case ((elemId, factor), seq) ⇒
+            val suggs = seq.flatMap { case (_, seq) ⇒ seq }
 
             if (suggs.isEmpty)
                 throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
 
-            val suggsSumScores =
-                suggs.
-                    groupBy(_.stem).
-                    filter(_._2.size > factor / 3.0). // Drop rare variants. TODO:
-                    map { case (_, seq) ⇒ seq.minBy(-_.totalScore) → seq.map(_.totalScore).sum}.
-                    toSeq.
-                    sortBy { case(_, sumScore) ⇒ -sumScore }
+            val top = suggs.groupBy(_.stem).map { case (_, group) ⇒
+                val best = group.minBy(-_.totalScore)
 
-            val maxSum = suggsSumScores.map { case (_, score) ⇒ score }.sum * 0.5
+                best → (group.size, best.totalScore)
+                // TODO:
+            }.toSeq.sortBy( p ⇒ (-p._2._1, -p._2._2)).take(10)
 
-            val sum = new AtomicDouble(0.0)
+            // TODO:
+            println("TOP:" + top)
 
-            var suggsNorm = for ((s, sumScore) ← suggsSumScores if sum.getAndAdd(sumScore) < maxSum) yield s
-
-            if (suggsNorm.isEmpty)
-                suggsNorm = Seq(suggs.minBy(-_.totalScore))
-
-            contextWords += elemId → suggsNorm.sortBy(-_.totalScore).map(p ⇒ p.stem → p.totalScore).toMap
+            contextWords += elemId → top.map(_._1).map(_.stem).toSet
         }
 
         logger.whenInfoEnabled({
             val tbl = NCAsciiTable()
 
-            tbl #= ("Context word", "Score")
+            tbl #= "Context word"
 
-            contextWords.foreach { case (elemId, map) ⇒
-                tbl += (s"Element ID: '$elemId'", "")
+            contextWords.foreach { case (elemId, set) ⇒
+                tbl += s"Element ID: '$elemId'"
 
-                map.toSeq.sortBy(-_._2).foreach { case (m, score) ⇒ tbl += (m, "%1.3f" format score) }
+                set.foreach(s ⇒ tbl += s)
             }
 
             tbl.info(logger, Some(s"Context words for model: $mdlId"))
