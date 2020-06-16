@@ -19,9 +19,9 @@ package org.apache.nlpcraft.server.nlp.enrichers.ctxword
 
 import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.NCService
-import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceToken => Token, NCNlpSentenceNote ⇒ Note}
+import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceToken ⇒ Token, NCNlpSentenceNote ⇒ Note}
 import org.apache.nlpcraft.server.ctxword.{NCContextWordManager, NCContextWordParameter, NCContextWordRequest, NCContextWordResponse}
-import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo => Config}
+import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo ⇒ Config}
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 
 import scala.collection.Map
@@ -31,7 +31,8 @@ object NCContextWordEnricher extends NCServerEnricher {
     private final val MIN_SENTENCE_FTEXT = 0.5
 
     private final val MIN_EXAMPLE_SCORE = 1
-    private final val MIN_EXAMPLE_FTEXT = 0.5
+    private final val MIN_EXAMPLE_ALL_FTEXT = 0.3
+    private final val MIN_EXAMPLE_BEST_FTEXT = 0.5
 
     private final val LIMIT = 20
 
@@ -104,7 +105,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         case class V(elementId: String, example: String, token: Token)
         case class VExt(value: V, requests: Seq[NCContextWordRequest])
 
-        val allReqs =
+        val allReqs: Seq[VExt] =
             examples.flatMap { case (elemId, exMap) ⇒
                 def make(exampleWords: Seq[String], idxs: Seq[Int], tok: Token): VExt = {
                     val words = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
@@ -118,14 +119,13 @@ object NCContextWordEnricher extends NCServerEnricher {
         val allSuggs =
             NCContextWordManager.suggest(
                 allReqs.flatMap(_.requests),
-                NCContextWordParameter(limit = LIMIT, totalScore = MIN_EXAMPLE_SCORE, ftextScore = MIN_EXAMPLE_FTEXT)
+                NCContextWordParameter(limit = LIMIT, totalScore = MIN_EXAMPLE_SCORE, ftextScore = MIN_EXAMPLE_ALL_FTEXT)
             )
 
-        val groupReqs = allReqs.flatMap(p ⇒ p.requests.indices.map(_ ⇒ p.value))
+        require(allSuggs.size == allReqs.map(_.requests.size).sum)
 
-        require(groupReqs.size == allSuggs.size)
-
-        groupReqs.
+        allReqs.
+            flatMap(p ⇒ p.requests.indices.map(_ ⇒ p.value)).
             zip(allSuggs).
             groupBy { case (v, _) ⇒ (v.elementId, v.token) }.
             flatMap { case ((elemId, tok), seq) ⇒
@@ -137,8 +137,14 @@ object NCContextWordEnricher extends NCServerEnricher {
                                 find(p ⇒ cfg.contextWords(elemId).contains(p.stem))
                         }
 
-                if (suggs.size == cfg.examples(elemId).size)
-                    Some(tok → makeHolder(elemId, tok, suggs.toSeq.minBy(p ⇒ (-p.ftextScore, -p.totalScore))))
+                if (suggs.size == cfg.examples(elemId).size) {
+                    val best = suggs.toSeq.minBy(p ⇒ (-p.ftextScore, -p.totalScore))
+
+                    if (best.ftextScore >= MIN_EXAMPLE_BEST_FTEXT)
+                        Some(tok → makeHolder(elemId, tok, best))
+                    else
+                        None
+                }
                 else
                     None
             }
@@ -158,9 +164,8 @@ object NCContextWordEnricher extends NCServerEnricher {
         require(words.size >= subst.size)
         require(subst.keys.forall(i ⇒ i >= 0 && i < words.length))
 
-        words.zipWithIndex.map {
-            case (w, i) ⇒ subst.getOrElse(i, w)
-        }
+        words.zipWithIndex.map {  case (w, i) ⇒ subst.getOrElse(i, w) }
+        words.zipWithIndex.map {  case (w, i) ⇒ subst.getOrElse(i, w) }
     }
 
     override def enrich(ns: NCNlpSentence, parent: Span): Unit =

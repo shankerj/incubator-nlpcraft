@@ -20,6 +20,7 @@ package org.apache.nlpcraft.server.ctxword
 import java.net.ConnectException
 import java.util.{List => JList}
 
+import com.google.common.util.concurrent.AtomicDouble
 import com.google.gson.reflect.TypeToken
 import com.google.gson.{Gson, GsonBuilder}
 import io.opencensus.trace.Span
@@ -54,9 +55,9 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     private final val TYPE_RESP = new TypeToken[JList[JList[Suggestion]]]() {}.getType
     private final val CLIENT = HttpClients.createDefault
 
-    private final val CONF_LIMIT = 10
-    private final val CONF_SUM_LIMIT = 5
-    private final val CONF_MIN_SCORE = 0.8
+    private final val CONF_LIMIT = 1000
+    private final val CONF_MIN_SCORE = 1
+    private final val CONF_TOP_FACTOR = 0.2
 
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
@@ -216,6 +217,26 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }
     }
 
+    private def getTop[T](seq: Seq[T], getWeight: T ⇒ Double, contrFactor: Double): Seq[T] = {
+        require(seq.nonEmpty)
+        require(contrFactor > 0 && contrFactor  < 1)
+
+        val seqW = seq.map(p ⇒ p → getWeight(p)).sortBy(-_._2)
+        val sorted = seqW.map(_._1)
+
+        val limitSum = seqW.map(_._2).sum * contrFactor
+        val limitCnt = (1 / contrFactor).toInt
+
+        val v = new AtomicDouble(0)
+
+        val top = for (t ← sorted if v.getAndAdd(getWeight(t)) < limitSum) yield t
+
+        println("top="+top)
+        println("limitCnt="+limitCnt)
+
+        if (top.size < limitCnt) sorted.take(limitCnt) else top
+    }
+
     @throws[NCE]
     def makeConfig(
         mdlId: String,
@@ -281,13 +302,15 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
 
                 elemId →
-                    suggs.
-                        groupBy(_.stem).
-                        map { case (_, group) ⇒ Group(group.minBy(-_.totalScore), group.size) }.
-                        toSeq.
-                        map(group ⇒ GroupFactor(group, group.word.totalScore * group.count / suggs.size)).
-                        sortBy(-_.factor).
-                        take(CONF_SUM_LIMIT)
+                    getTop(
+                        seq = suggs.
+                            groupBy(_.stem).
+                            map { case (_, group) ⇒ Group(group.minBy(-_.totalScore), group.size) }.
+                            toSeq.
+                            map(group ⇒ GroupFactor(group, group.word.totalScore * group.count / suggs.size)),
+                        getWeight = (g: GroupFactor) ⇒ g.factor,
+                        contrFactor = CONF_TOP_FACTOR
+                    )
             }
 
         logger.whenInfoEnabled({
@@ -298,7 +321,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             groups.foreach { case (elemId, elemGroups) ⇒
                 tbl += (s"Element ID: '$elemId'", "", "", "")
 
-                def f(d: Double): String = "%1.3f" format d
+                def f(d: Double): String = "%1.10f" format d
 
                 elemGroups.
                     sortBy(-_.factor).
