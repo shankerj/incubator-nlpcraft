@@ -19,8 +19,8 @@ package org.apache.nlpcraft.server.nlp.enrichers.ctxword
 
 import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.NCService
-import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote => Note, NCNlpSentenceToken => Token}
-import org.apache.nlpcraft.server.ctxword.{NCContextWordResponse, NCContextWordParameter, NCContextWordManager, NCContextWordRequest}
+import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceToken => Token, NCNlpSentenceNote ⇒ Note}
+import org.apache.nlpcraft.server.ctxword.{NCContextWordManager, NCContextWordParameter, NCContextWordRequest, NCContextWordResponse}
 import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo => Config}
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 
@@ -31,7 +31,7 @@ object NCContextWordEnricher extends NCServerEnricher {
     private final val MIN_SENTENCE_FTEXT = 0.5
 
     private final val MIN_EXAMPLE_SCORE = 1
-    private final val MIN_EXAMPLE_FTEXT = 0.1
+    private final val MIN_EXAMPLE_FTEXT = 0.5
 
     private final val LIMIT = 20
 
@@ -60,7 +60,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         }
     }
 
-    override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { span ⇒
+    override def start(parent: Span = null): NCService = startScopedSpan("start", parent) { _ ⇒
         super.start()
     }
 
@@ -81,7 +81,7 @@ object NCContextWordEnricher extends NCServerEnricher {
     private def trySentence(cfg: Config, toks: Seq[Token], ns: NCNlpSentence): Map[Token, Holder] = {
         val words = ns.tokens.map(_.origText)
 
-        val suggs: Seq[Seq[NCContextWordResponse]] =
+        val suggs =
             NCContextWordManager.suggest(
                 toks.map(t ⇒ NCContextWordRequest(words, t.index)),
                 NCContextWordParameter(limit = LIMIT, totalScore = MIN_SENTENCE_SCORE, ftextScore = MIN_SENTENCE_FTEXT)
@@ -93,121 +93,118 @@ object NCContextWordEnricher extends NCServerEnricher {
             flatMap { case (tok, suggs) ⇒
                 suggs.sortBy(-_.totalScore).flatMap(sugg ⇒
                     cfg.contextWords.toStream.flatMap { case (elemId, stems) ⇒
-                        if (stems.contains(sugg.stem))
-                            Some(
-                                tok →
-                                    Holder(
-                                        elementId = elemId,
-                                        stem = sugg.stem,
-                                        value = tok.normText,
-                                        score = sugg.totalScore,
-                                        bertScore = Some(sugg.bertScore),
-                                        ftextScore = Some(sugg.ftextScore)
-                                    )
-                            )
-                        else
-                            None
+                        if (stems.contains(sugg.stem)) Some(tok → makeHolder(elemId, tok, sugg)) else None
                     }).headOption
             }.toMap
     }
 
     private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
-        case class Value(elementId: String, contextWords: Set[String], token: Token, examplesCount: Int)
+        val examples = cfg.examples.toSeq
 
-        val reqs = collection.mutable.ArrayBuffer.empty[(NCContextWordRequest, Value)]
+        case class V(elementId: String, example: String, token: Token)
+        case class VExt(value: V, requests: Seq[NCContextWordRequest])
 
-        cfg.examples.foreach { case (elemId, examples) ⇒
-            val ctxWords = cfg.contextWords(elemId)
+        val allReqs =
+            examples.flatMap { case (elemId, exMap) ⇒
+                def make(exampleWords: Seq[String], idxs: Seq[Int], tok: Token): VExt = {
+                    val words = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
 
-            for ((exampleWords, idxs) ← examples; tok ← toks) {
-                val words = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
+                    VExt(V(elemId, words.mkString(" "), tok), idxs.map(i ⇒ NCContextWordRequest(words, i)))
+                }
 
-                idxs.map(i ⇒ reqs += NCContextWordRequest(words, i) → Value(elemId, ctxWords, tok, examples.size))
+                for ((exampleWords, idxs) ← exMap; tok ← toks) yield make(exampleWords, idxs, tok)
             }
-        }
 
-        val allSuggs = NCContextWordManager.suggest(
-            reqs.map { case (req, _) ⇒ req },
-            NCContextWordParameter(limit = LIMIT, totalScore = MIN_EXAMPLE_SCORE, ftextScore = MIN_EXAMPLE_FTEXT)
-        )
+        val allSuggs =
+            NCContextWordManager.suggest(
+                allReqs.flatMap(_.requests),
+                NCContextWordParameter(limit = LIMIT, totalScore = MIN_EXAMPLE_SCORE, ftextScore = MIN_EXAMPLE_FTEXT)
+            )
 
-        require(allSuggs.size == allSuggs.size)
+        val groupReqs = allReqs.flatMap(p ⇒ p.requests.indices.map(_ ⇒ p.value))
 
-        reqs.map { case (_, value) ⇒ value }.
+        require(groupReqs.size == allSuggs.size)
+
+        groupReqs.
             zip(allSuggs).
-            // TODO:
-            flatMap { case (value, suggs) ⇒
-                val filtSuggs = suggs.filter(s ⇒ value.contextWords.contains(s.stem))
+            groupBy { case (v, _) ⇒ (v.elementId, v.token) }.
+            flatMap { case ((elemId, tok), seq) ⇒
+                val suggs =
+                    seq.groupBy { case (v, _) ⇒ v.example}.
+                        flatMap { case (_, seq) ⇒
+                            seq.flatMap { case (_, seq) ⇒ seq }.
+                                sortBy(p ⇒ (-p.ftextScore, -p.totalScore)).
+                                find(p ⇒ cfg.contextWords(elemId).contains(p.stem))
+                        }
 
-//                if (filtSuggs.size == value.examplesCount)
-                    Some((value.token, value.elementId) → filtSuggs)
-//                else
-//                    None
-            }.
-            flatMap {
-                case ((tok, elemId), seq) ⇒
-                    seq.map(sugg ⇒
-                        tok →
-                            Holder(
-                                elementId = elemId,
-                                stem = sugg.stem,
-                                value = tok.normText,
-                                score = sugg.totalScore,
-                                bertScore = Some(sugg.bertScore),
-                                ftextScore = Some(sugg.ftextScore)
-                            )
-                    )
-            }.
-            groupBy { case (tok, _) ⇒ tok }.
-            map { case (tok, seq) ⇒ tok → seq.map { case (_, h) ⇒ h }.minBy(-_.score) }
+                if (suggs.size == cfg.examples(elemId).size)
+                    Some(tok → makeHolder(elemId, tok, suggs.toSeq.minBy(p ⇒ (-p.ftextScore, -p.totalScore))))
+                else
+                    None
+            }
     }
+
+    private def makeHolder(elemId: String, tok: Token, resp: NCContextWordResponse): Holder =
+        Holder(
+            elementId = elemId,
+            stem = resp.stem,
+            value = tok.normText,
+            score = resp.totalScore,
+            bertScore = Some(resp.bertScore),
+            ftextScore = Some(resp.ftextScore)
+        )
 
     private def substitute(words: Seq[String], subst: Map[Int, String]): Seq[String] = {
         require(words.size >= subst.size)
         require(subst.keys.forall(i ⇒ i >= 0 && i < words.length))
 
-        words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }
+        words.zipWithIndex.map {
+            case (w, i) ⇒ subst.getOrElse(i, w)
+        }
     }
 
     override def enrich(ns: NCNlpSentence, parent: Span): Unit =
-        startScopedSpan("enrich", parent, "srvReqId" → ns.srvReqId, "txt" → ns.text) { _ ⇒
-            ns.ctxWordsConfig match {
-                case Some(cfg) ⇒
-                    val toks = ns.filter(_.pos.startsWith("N"))
+        startScopedSpan("enrich", parent, "srvReqId" → ns.srvReqId, "txt" → ns.text) {
+            _ ⇒
+                ns.ctxWordsConfig match {
+                    case Some(cfg) ⇒
+                        val toks = ns.filter(_.pos.startsWith("N"))
 
-                    def logResults(typ: String, m: Map[Token, Holder]): Unit =
-                        m.foreach { case (tok, h) ⇒
-                            logger.info(
-                                s"Token detected [index=${tok.index}, text=${tok.origText}, detected=$typ, data=$h"
-                            )
-                        }
+                        def logResults(typ: String, m: Map[Token, Holder]): Unit =
+                            m.foreach {
+                                case (tok, h) ⇒
+                                    logger.info(
+                                        s"Token detected [index=${tok.index}, text=${tok.origText}, detected=$typ, data=$h"
+                                    )
+                            }
 
-                    var m = tryDirect(cfg, toks, Integer.MAX_VALUE)
+                        var m = tryDirect(cfg, toks, Integer.MAX_VALUE)
 
-                    logResults("direct", m)
+                        logResults("direct", m)
 
-                    def getOther: Seq[Token] = toks.filter(t ⇒ !m.contains(t))
-
-                    if (m.size != toks.size) {
-                        val m1 = trySentence(cfg, getOther, ns)
-
-                        logResults("sentence", m1)
-
-                        m ++= m1
+                        def getOther: Seq[Token] = toks.filter(t ⇒ !m.contains(t))
 
                         if (m.size != toks.size) {
-                            val m2 = tryExamples(cfg, getOther)
+                            val m1 = trySentence(cfg, getOther, ns)
 
-                            logResults("examples", m2)
+                            logResults("sentence", m1)
 
-                            m ++= m2
+                            m ++= m1
+
+                            if (m.size != toks.size) {
+                                val m2 = tryExamples(cfg, getOther)
+
+                                logResults("examples", m2)
+
+                                m ++= m2
+                            }
                         }
-                    }
 
-                    m.foreach { case (t, h) ⇒
-                        t.add(Note(Seq(t.index), h.elementId, "value" → h.value, "score" → h.score))
-                    }
-                case None ⇒ // No-op.
-            }
+                        m.foreach {
+                            case (t, h) ⇒
+                                t.add(Note(Seq(t.index), h.elementId, "value" → h.value, "score" → h.score))
+                        }
+                    case None ⇒ // No-op.
+                }
         }
 }
