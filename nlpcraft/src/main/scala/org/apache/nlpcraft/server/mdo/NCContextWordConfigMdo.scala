@@ -26,5 +26,11 @@ import org.apache.nlpcraft.server.mdo.impl._
 case class NCContextWordConfigMdo(
     @NCMdoField synonyms: Map[String /*Element ID*/, Map[String /*Synonym stem*/, String /*Value*/]],
     @NCMdoField contextWords: Map[String /*Element ID*/, Set[String]/*Stems*/],
-    @NCMdoField examples: Map[String /*Element ID*/, Map[Seq[String]/*Synonyms tokens*/, Seq[Int] /*Positions to substitute*/]]
+    @NCMdoField examples: Map[
+        String /*Element ID*/,
+        Map[
+            Seq[String]/*Synonyms tokens*/,
+            Map[Int/*Positions to substitute*/, String/*POS*/]
+        ]
+    ]
 )

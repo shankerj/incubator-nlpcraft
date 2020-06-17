@@ -19,23 +19,32 @@ package org.apache.nlpcraft.server.nlp.enrichers.ctxword
 
 import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.NCService
-import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceToken ⇒ Token, NCNlpSentenceNote ⇒ Note}
+import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote ⇒ Note, NCNlpSentenceToken ⇒ Token}
 import org.apache.nlpcraft.server.ctxword.{NCContextWordManager, NCContextWordParameter, NCContextWordRequest, NCContextWordResponse}
 import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo ⇒ Config}
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
+import org.jibx.schema.codegen.extend.DefaultNameConverter
 
 import scala.collection.Map
 
 object NCContextWordEnricher extends NCServerEnricher {
+    // Configuration when we try to find context words for words nouns using initial sentence.
     private final val MIN_SENTENCE_SCORE = 0.5
     private final val MIN_SENTENCE_FTEXT = 0.5
 
+    // Configuration when we try to find context words for words nouns using substituted examples.
     private final val MIN_EXAMPLE_SCORE = 1
+    // Context words for all examples should satisfy it.
     private final val MIN_EXAMPLE_ALL_FTEXT = 0.3
+    // At least on context word with this score must be found.
     private final val MIN_EXAMPLE_BEST_FTEXT = 0.5
 
+    // Request limit.
     private final val LIMIT = 20
 
+    private final val CONVERTER = new DefaultNameConverter
+
+    private case class Word(text: String, index: Int, examplePos: String, wordPos: String)
     private case class Holder(
         elementId: String,
         stem: String,
@@ -69,15 +78,21 @@ object NCContextWordEnricher extends NCServerEnricher {
         super.stop()
     }
 
-    private def tryDirect(cfg: Config, toks: Seq[Token], score: Double): Map[Token, Holder] =
-        cfg.synonyms.flatMap { case (elemId, syns) ⇒
-            toks.flatMap(tok ⇒
-                syns.get(tok.stem) match {
-                    case Some(value) ⇒ Some(tok → Holder(elemId, tok.stem, value, score))
-                    case None ⇒ None
-                }
-            )
-        }
+    private def tryDirect(cfg: Config, toks: Seq[Token], score: Double): Map[Token, Holder] = {
+        val res =
+            cfg.synonyms.flatMap { case (elemId, syns) ⇒
+                toks.flatMap(tok ⇒
+                    syns.get(tok.stem) match {
+                        case Some(value) ⇒ Some(tok → Holder(elemId, tok.stem, value, score))
+                        case None ⇒ None
+                    }
+                )
+            }
+
+        logResults("direct", res)
+
+        res
+    }
 
     private def trySentence(cfg: Config, toks: Seq[Token], ns: NCNlpSentence): Map[Token, Holder] = {
         val words = ns.tokens.map(_.origText)
@@ -90,13 +105,18 @@ object NCContextWordEnricher extends NCServerEnricher {
 
         require(toks.size == suggs.size)
 
-        toks.zip(suggs).
-            flatMap { case (tok, suggs) ⇒
-                suggs.sortBy(-_.totalScore).flatMap(sugg ⇒
-                    cfg.contextWords.toStream.flatMap { case (elemId, stems) ⇒
-                        if (stems.contains(sugg.stem)) Some(tok → makeHolder(elemId, tok, sugg)) else None
-                    }).headOption
-            }.toMap
+        val res =
+            toks.zip(suggs).
+                flatMap { case (tok, suggs) ⇒
+                    suggs.sortBy(-_.totalScore).flatMap(sugg ⇒
+                        cfg.contextWords.toStream.flatMap { case (elemId, stems) ⇒
+                            if (stems.contains(sugg.stem)) Some(tok → makeHolder(elemId, tok, sugg)) else None
+                        }).headOption
+                }.toMap
+
+        logResults("sentence", res)
+
+        res
     }
 
     private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
@@ -107,10 +127,14 @@ object NCContextWordEnricher extends NCServerEnricher {
 
         val allReqs: Seq[VExt] =
             examples.flatMap { case (elemId, exMap) ⇒
-                def make(exampleWords: Seq[String], idxs: Seq[Int], tok: Token): VExt = {
-                    val words = substitute(exampleWords, idxs.map(_ → tok.normText).toMap)
+                def make(exampleWords: Seq[String], idxs: Map[Int, String], tok: Token): VExt = {
+                    val words =
+                        substitute(exampleWords, idxs.map { case (idx, pos) ⇒ Word(tok.origText, idx, pos, tok.pos) })
 
-                    VExt(V(elemId, words.mkString(" "), tok), idxs.map(i ⇒ NCContextWordRequest(words, i)))
+                    VExt(
+                        V(elemId, words.mkString(" "), tok),
+                        idxs.keys.toSeq.sorted.map(i ⇒ NCContextWordRequest(words, i))
+                    )
                 }
 
                 for ((exampleWords, idxs) ← exMap; tok ← toks) yield make(exampleWords, idxs, tok)
@@ -124,30 +148,35 @@ object NCContextWordEnricher extends NCServerEnricher {
 
         require(allSuggs.size == allReqs.map(_.requests.size).sum)
 
-        allReqs.
-            flatMap(p ⇒ p.requests.indices.map(_ ⇒ p.value)).
-            zip(allSuggs).
-            groupBy { case (v, _) ⇒ (v.elementId, v.token) }.
-            flatMap { case ((elemId, tok), seq) ⇒
-                val suggs =
-                    seq.groupBy { case (v, _) ⇒ v.example}.
-                        flatMap { case (_, seq) ⇒
-                            seq.flatMap { case (_, seq) ⇒ seq }.
-                                sortBy(p ⇒ (-p.ftextScore, -p.totalScore)).
-                                find(p ⇒ cfg.contextWords(elemId).contains(p.stem))
-                        }
+        val res =
+            allReqs.
+                flatMap(p ⇒ p.requests.indices.map(_ ⇒ p.value)).
+                zip(allSuggs).
+                groupBy { case (v, _) ⇒ (v.elementId, v.token) }.
+                flatMap { case ((elemId, tok), seq) ⇒
+                    val suggs =
+                        seq.groupBy { case (v, _) ⇒ v.example}.
+                            flatMap { case (_, seq) ⇒
+                                seq.flatMap { case (_, seq) ⇒ seq }.
+                                    sortBy(p ⇒ (-p.ftextScore, -p.totalScore)).
+                                    find(p ⇒ cfg.contextWords(elemId).contains(p.stem))
+                            }
 
-                if (suggs.size == cfg.examples(elemId).size) {
-                    val best = suggs.toSeq.minBy(p ⇒ (-p.ftextScore, -p.totalScore))
+                    if (suggs.size == cfg.examples(elemId).size) {
+                        val best = suggs.toSeq.minBy(p ⇒ (-p.ftextScore, -p.totalScore))
 
-                    if (best.ftextScore >= MIN_EXAMPLE_BEST_FTEXT)
-                        Some(tok → makeHolder(elemId, tok, best))
+                        if (best.ftextScore >= MIN_EXAMPLE_BEST_FTEXT)
+                            Some(tok → makeHolder(elemId, tok, best))
+                        else
+                            None
+                    }
                     else
                         None
                 }
-                else
-                    None
-            }
+
+        logResults("examples", res)
+
+        res
     }
 
     private def makeHolder(elemId: String, tok: Token, resp: NCContextWordResponse): Holder =
@@ -160,54 +189,53 @@ object NCContextWordEnricher extends NCServerEnricher {
             ftextScore = Some(resp.ftextScore)
         )
 
-    private def substitute(words: Seq[String], subst: Map[Int, String]): Seq[String] = {
-        require(words.size >= subst.size)
-        require(subst.keys.forall(i ⇒ i >= 0 && i < words.length))
+    private def substitute(template: Seq[String], substs: Iterable[Word]): Seq[String] = {
+        require(template.size >= substs.size)
+        require(substs.map(_.index).forall(i ⇒ i >= 0 && i < template.length))
 
-        words.zipWithIndex.map {  case (w, i) ⇒ subst.getOrElse(i, w) }
-        words.zipWithIndex.map {  case (w, i) ⇒ subst.getOrElse(i, w) }
+        val substMap = substs.map(p ⇒ p.index → p).toMap
+
+        template.zipWithIndex.map {  case (templ, i) ⇒
+            substMap.get(i) match {
+                case Some(subst) ⇒
+                    if (subst.examplePos == "NN" && subst.wordPos == "NNS")
+                        CONVERTER.depluralize(subst.text)
+                    else if (subst.examplePos == "NNS" && subst.wordPos == "NN")
+                        CONVERTER.pluralize(subst.text)
+                    else
+                        subst.text
+                case None ⇒ templ
+            }
+        }
     }
 
-    override def enrich(ns: NCNlpSentence, parent: Span): Unit =
-        startScopedSpan("enrich", parent, "srvReqId" → ns.srvReqId, "txt" → ns.text) {
+    private def logResults(typ: String, m: Map[Token, Holder]): Unit =
+        m.foreach {
+            case (tok, h) ⇒
+                logger.info(
+                    s"Token detected [index=${tok.index}, text=${tok.origText}, detected=$typ, data=$h"
+                )
+        }
+
+    override def enrich(sen: NCNlpSentence, parent: Span): Unit =
+        startScopedSpan("enrich", parent, "srvReqId" → sen.srvReqId, "txt" → sen.text) {
             _ ⇒
-                ns.ctxWordsConfig match {
+                sen.ctxWordsConfig match {
                     case Some(cfg) ⇒
-                        val toks = ns.filter(_.pos.startsWith("N"))
+                        val nn = sen.filter(t ⇒ t.pos == "NN" || t.pos == "NNS")
+                        var m = tryDirect(cfg, nn, Integer.MAX_VALUE)
 
-                        def logResults(typ: String, m: Map[Token, Holder]): Unit =
-                            m.foreach {
-                                case (tok, h) ⇒
-                                    logger.info(
-                                        s"Token detected [index=${tok.index}, text=${tok.origText}, detected=$typ, data=$h"
-                                    )
-                            }
+                        def getOther: Seq[Token] = nn.filter(t ⇒ !m.contains(t))
 
-                        var m = tryDirect(cfg, toks, Integer.MAX_VALUE)
+                        if (m.size != nn.size) {
+                            m ++= trySentence(cfg, getOther, sen)
 
-                        logResults("direct", m)
-
-                        def getOther: Seq[Token] = toks.filter(t ⇒ !m.contains(t))
-
-                        if (m.size != toks.size) {
-                            val m1 = trySentence(cfg, getOther, ns)
-
-                            logResults("sentence", m1)
-
-                            m ++= m1
-
-                            if (m.size != toks.size) {
-                                val m2 = tryExamples(cfg, getOther)
-
-                                logResults("examples", m2)
-
-                                m ++= m2
-                            }
+                            if (m.size != nn.size)
+                                m ++= tryExamples(cfg, getOther)
                         }
 
                         m.foreach {
-                            case (t, h) ⇒
-                                t.add(Note(Seq(t.index), h.elementId, "value" → h.value, "score" → h.score))
+                            case (t, h) ⇒ t.add(Note(Seq(t.index), h.elementId, "value" → h.value, "score" → h.score))
                         }
                     case None ⇒ // No-op.
                 }

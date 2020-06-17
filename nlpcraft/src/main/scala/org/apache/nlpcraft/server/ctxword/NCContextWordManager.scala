@@ -18,7 +18,7 @@
 package org.apache.nlpcraft.server.ctxword
 
 import java.net.ConnectException
-import java.util.{List => JList}
+import java.util.{List ⇒ JList}
 
 import com.google.common.util.concurrent.AtomicDouble
 import com.google.gson.reflect.TypeToken
@@ -39,6 +39,7 @@ import org.apache.nlpcraft.server.ignite.NCIgniteInstance
 import org.apache.nlpcraft.server.mdo.NCContextWordConfigMdo
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
+import org.jibx.schema.codegen.extend.DefaultNameConverter
 
 import scala.collection.JavaConverters._
 import scala.util.control.Exception.catching
@@ -55,9 +56,16 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     private final val TYPE_RESP = new TypeToken[JList[JList[Suggestion]]]() {}.getType
     private final val CLIENT = HttpClients.createDefault
 
+    private final val CONVERTER = new DefaultNameConverter
+
+    // Configuration request limit for each processed example.
     private final val CONF_LIMIT = 1000
+    // Minimal score for requested words for each processed example.
     private final val CONF_MIN_SCORE = 1
-    private final val CONF_TOP_FACTOR = 0.2
+    // If we have a lot of context words candidates, we choose top 50%.
+    private final val CONF_TOP_FACTOR = 0.5
+    // If we have small context words candidates count, we choose at least 3.
+    private final val CONF_TOP_MIN = 3
 
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
@@ -73,6 +81,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         min_ftext: Double,
         min_bert: Double
     )
+
+    private case class Word(text: String, index: Int, examplePos: String)
 
     private final val HANDLER: ResponseHandler[Seq[Seq[Suggestion]]] =
         (resp: HttpResponse) ⇒ {
@@ -210,31 +220,35 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         super.stop()
     }
 
-    private def substitute(words: Seq[String], subst: Map[Int, String]): Seq[String] = {
-        require(words.size >= subst.size)
-        require(subst.keys.forall(i ⇒ i >= 0 && i < words.length))
+    private def substitute(template: Seq[String], substs: Iterable[Word]): Seq[String] = {
+        require(template.size >= substs.size)
+        require(substs.map(_.index).forall(i ⇒ i >= 0 && i < template.length))
 
-        words.zipWithIndex.map { case (w, i) ⇒ subst.getOrElse(i, w) }
+        val substMap = substs.map(p ⇒ p.index → p).toMap
+
+        template.zipWithIndex.map {  case (templ, i) ⇒
+            substMap.get(i) match {
+                case Some(subst) ⇒
+                    // TODO: we suppose that all configured values are NN (noun, singular form)
+                    if (subst.examplePos == "NNS") CONVERTER.pluralize(subst.text) else subst.text
+                case None ⇒ templ
+            }
+        }
     }
 
-    private def getTop[T](seq: Seq[T], getWeight: T ⇒ Double, contrFactor: Double): Seq[T] = {
+    private def getTop[T](seq: Seq[T], getWeight: T ⇒ Double): Seq[T] = {
         require(seq.nonEmpty)
-        require(contrFactor > 0 && contrFactor  < 1)
+        require(CONF_TOP_FACTOR > 0 && CONF_TOP_FACTOR < 1)
 
         val seqW = seq.map(p ⇒ p → getWeight(p)).sortBy(-_._2)
-        val sorted = seqW.map(_._1)
 
-        val limitSum = seqW.map(_._2).sum * contrFactor
-        val limitCnt = (1 / contrFactor).toInt
+        val limitSum = seqW.map { case (_, factor) ⇒ factor }.sum * CONF_TOP_FACTOR
 
         val v = new AtomicDouble(0)
 
-        val top = for (t ← sorted if v.getAndAdd(getWeight(t)) < limitSum) yield t
+        val top = for ((value, factor) ← seqW if v.getAndAdd(factor) < limitSum) yield value
 
-        println("top="+top)
-        println("limitCnt="+limitCnt)
-
-        if (top.size < limitCnt) sorted.take(limitCnt) else top
+        if (top.size < CONF_TOP_MIN) seqW.take(CONF_TOP_MIN).map { case (value, _) ⇒ value } else top
     }
 
     @throws[NCE]
@@ -248,7 +262,11 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val examplesCfg =
             collection.mutable.HashMap.empty[
-                String /*Element ID*/ , Map[Seq[String] /*Synonyms tokens*/, Seq[Int] /*Positions to substitute*/]
+                String /*Element ID*/,
+                Map[
+                    Seq[String] /*Synonyms tokens*/,
+                    Map[Int/*Positions to substitute*/, String/*POS*/]
+                ]
             ]
 
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
@@ -257,11 +275,11 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val allReqs: Seq[Holder] =
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.values.flatten.toSet }.flatMap { case (elemId, allElemSyns) ⇒
-                val elemNormExs: Map[Seq[NCNlpWord], Seq[Int]] =
+                val elemNormExs: Map[Seq[NCNlpWord], Map[Int, String]] =
                     normExs.flatMap(e ⇒ {
                         val indexes = e.zipWithIndex.flatMap {
-                            case (w, idx) ⇒ if (allElemSyns.contains(w.stem)) Some(idx) else None
-                        }
+                            case (w, idx) ⇒ if (allElemSyns.contains(w.stem)) Some(idx → w.pos) else None
+                        }.toMap
 
                         if (indexes.nonEmpty) Some(e → indexes) else None
                     }).toMap
@@ -272,14 +290,15 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 examplesCfg += elemId → elemNormExs.map { case (ex, idxs) ⇒ ex.map(_.word) → idxs }
 
                 elemNormExs.flatMap { case (ex, idxs) ⇒
+                    // TODO: POSes for substitute
                     val exWords = ex.map(_.word)
 
                     allElemSyns.toSeq.combinations(idxs.size).flatMap(comb ⇒ {
                         require(comb.size == idxs.size)
 
-                        val words = substitute(exWords, idxs.zip(comb).toMap)
+                        val words = substitute(exWords, idxs.zip(comb).map { case ((idx, pos), w) ⇒ Word(w, idx, pos) })
 
-                        idxs.map(NCContextWordRequest(words, _))
+                        idxs.keys.map(NCContextWordRequest(words, _))
                     })
                 }.toSeq.map(req ⇒ Holder(req, elemId))
             }.toSeq
@@ -308,8 +327,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                             map { case (_, group) ⇒ Group(group.minBy(-_.totalScore), group.size) }.
                             toSeq.
                             map(group ⇒ GroupFactor(group, group.word.totalScore * group.count / suggs.size)),
-                        getWeight = (g: GroupFactor) ⇒ g.factor,
-                        contrFactor = CONF_TOP_FACTOR
+                        getWeight = (g: GroupFactor) ⇒ g.factor
                     )
             }
 

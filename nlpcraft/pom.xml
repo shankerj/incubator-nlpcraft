@@ -236,6 +236,10 @@
             <groupId>com.jakewharton.fliptables</groupId>
             <artifactId>fliptables</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.jibx</groupId>
+            <artifactId>jibx-tools</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
