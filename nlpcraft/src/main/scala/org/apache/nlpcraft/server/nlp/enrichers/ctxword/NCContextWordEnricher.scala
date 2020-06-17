@@ -21,7 +21,7 @@ import io.opencensus.trace.Span
 import org.apache.nlpcraft.common.NCService
 import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote ⇒ Note, NCNlpSentenceToken ⇒ Token}
 import org.apache.nlpcraft.server.ctxword.{NCContextWordManager, NCContextWordParameter, NCContextWordRequest, NCContextWordResponse}
-import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo ⇒ Config}
+import org.apache.nlpcraft.server.mdo.{NCExampleMdo, NCContextWordConfigMdo ⇒ Config}
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
 import org.jibx.schema.codegen.extend.DefaultNameConverter
 
@@ -39,10 +39,13 @@ object NCContextWordEnricher extends NCServerEnricher {
     // At least on context word with this score must be found.
     private final val MIN_EXAMPLE_BEST_FTEXT = 0.5
 
-    // Request limit.
+    // Enricher request limit.
     private final val LIMIT = 20
 
     private final val CONVERTER = new DefaultNameConverter
+
+    private final val POS_PLURALS = Set("NNS", "NNPS")
+    private final val POS_SINGULAR = Set("NN", "NNP")
 
     private case class Word(text: String, index: Int, examplePos: String, wordPos: String)
     private case class Holder(
@@ -126,18 +129,21 @@ object NCContextWordEnricher extends NCServerEnricher {
         case class VExt(value: V, requests: Seq[NCContextWordRequest])
 
         val allReqs: Seq[VExt] =
-            examples.flatMap { case (elemId, exMap) ⇒
-                def make(exampleWords: Seq[String], idxs: Map[Int, String], tok: Token): VExt = {
+            examples.flatMap { case (elemId, exSeq) ⇒
+                def make(ex: NCExampleMdo, tok: Token): VExt = {
                     val words =
-                        substitute(exampleWords, idxs.map { case (idx, pos) ⇒ Word(tok.origText, idx, pos, tok.pos) })
+                        substitute(
+                            ex.words,
+                            ex.substitutions.map { case (idx, pos) ⇒ Word(tok.origText, idx, pos, tok.pos) }
+                        )
 
                     VExt(
                         V(elemId, words.mkString(" "), tok),
-                        idxs.keys.toSeq.sorted.map(i ⇒ NCContextWordRequest(words, i))
+                        ex.substitutions.keys.toSeq.sorted.map(i ⇒ NCContextWordRequest(words, i))
                     )
                 }
 
-                for ((exampleWords, idxs) ← exMap; tok ← toks) yield make(exampleWords, idxs, tok)
+                for (ex ← exSeq; tok ← toks) yield make(ex, tok)
             }
 
         val allSuggs =
@@ -190,7 +196,6 @@ object NCContextWordEnricher extends NCServerEnricher {
         )
 
     private def substitute(template: Seq[String], substs: Iterable[Word]): Seq[String] = {
-        require(template.size >= substs.size)
         require(substs.map(_.index).forall(i ⇒ i >= 0 && i < template.length))
 
         val substMap = substs.map(p ⇒ p.index → p).toMap
@@ -198,9 +203,9 @@ object NCContextWordEnricher extends NCServerEnricher {
         template.zipWithIndex.map {  case (templ, i) ⇒
             substMap.get(i) match {
                 case Some(subst) ⇒
-                    if (subst.examplePos == "NN" && subst.wordPos == "NNS")
+                    if (POS_SINGULAR.contains(subst.examplePos) && POS_PLURALS.contains(subst.wordPos))
                         CONVERTER.depluralize(subst.text)
-                    else if (subst.examplePos == "NNS" && subst.wordPos == "NN")
+                    else if (POS_PLURALS.contains(subst.examplePos) && POS_SINGULAR.contains(subst.wordPos))
                         CONVERTER.pluralize(subst.text)
                     else
                         subst.text
@@ -222,15 +227,15 @@ object NCContextWordEnricher extends NCServerEnricher {
             _ ⇒
                 sen.ctxWordsConfig match {
                     case Some(cfg) ⇒
-                        val nn = sen.filter(t ⇒ t.pos == "NN" || t.pos == "NNS")
+                        val nn = sen.filter(_.pos.startsWith("N"))
                         var m = tryDirect(cfg, nn, Integer.MAX_VALUE)
 
                         def getOther: Seq[Token] = nn.filter(t ⇒ !m.contains(t))
 
-                        if (m.size != nn.size) {
+                        if (m.size != nn.length) {
                             m ++= trySentence(cfg, getOther, sen)
 
-                            if (m.size != nn.size)
+                            if (m.size != nn.length)
                                 m ++= tryExamples(cfg, getOther)
                         }
 

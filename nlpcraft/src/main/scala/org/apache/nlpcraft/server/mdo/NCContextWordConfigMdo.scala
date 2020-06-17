@@ -20,17 +20,17 @@ package org.apache.nlpcraft.server.mdo
 import org.apache.nlpcraft.server.mdo.impl._
 
 /**
+  *
+  */
+@NCMdoEntity(sql = false)
+case class NCExampleMdo(@NCMdoField words: Seq[String], @NCMdoField substitutions: Map[Int/*Position*/, String/*POS*/])
+
+/**
   * Probe model context word config MDO.
   */
 @NCMdoEntity(sql = false)
 case class NCContextWordConfigMdo(
     @NCMdoField synonyms: Map[String /*Element ID*/, Map[String /*Synonym stem*/, String /*Value*/]],
     @NCMdoField contextWords: Map[String /*Element ID*/, Set[String]/*Stems*/],
-    @NCMdoField examples: Map[
-        String /*Element ID*/,
-        Map[
-            Seq[String]/*Synonyms tokens*/,
-            Map[Int/*Positions to substitute*/, String/*POS*/]
-        ]
-    ]
+    @NCMdoField examples: Map[String /*Element ID*/, Seq[NCExampleMdo]/*Examples*/]
 )

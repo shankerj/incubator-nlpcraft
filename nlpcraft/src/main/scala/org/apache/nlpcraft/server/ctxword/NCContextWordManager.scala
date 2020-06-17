@@ -36,7 +36,7 @@ import org.apache.nlpcraft.common.config.NCConfigurable
 import org.apache.nlpcraft.common.nlp.core.NCNlpCoreManager
 import org.apache.nlpcraft.common.{NCE, NCService}
 import org.apache.nlpcraft.server.ignite.NCIgniteInstance
-import org.apache.nlpcraft.server.mdo.NCContextWordConfigMdo
+import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo, NCExampleMdo}
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 import org.jibx.schema.codegen.extend.DefaultNameConverter
@@ -57,6 +57,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     private final val CLIENT = HttpClients.createDefault
 
     private final val CONVERTER = new DefaultNameConverter
+    private final val POS_PLURALS = Set("NNS", "NNPS")
 
     // Configuration request limit for each processed example.
     private final val CONF_LIMIT = 1000
@@ -221,17 +222,17 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     }
 
     private def substitute(template: Seq[String], substs: Iterable[Word]): Seq[String] = {
-        require(template.size >= substs.size)
         require(substs.map(_.index).forall(i ⇒ i >= 0 && i < template.length))
 
         val substMap = substs.map(p ⇒ p.index → p).toMap
 
         template.zipWithIndex.map {  case (templ, i) ⇒
             substMap.get(i) match {
+                // TODO: we suppose that all configured values are NN (noun, singular form)
                 case Some(subst) ⇒
-                    // TODO: we suppose that all configured values are NN (noun, singular form)
-                    if (subst.examplePos == "NNS") CONVERTER.pluralize(subst.text) else subst.text
-                case None ⇒ templ
+                    if (POS_PLURALS.contains(subst.examplePos)) CONVERTER.pluralize(subst.text) else subst.text
+                case None ⇒
+                    templ
             }
         }
     }
@@ -260,15 +261,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         val synonyms =
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
 
-        val examplesCfg =
-            collection.mutable.HashMap.empty[
-                String /*Element ID*/,
-                Map[
-                    Seq[String] /*Synonyms tokens*/,
-                    Map[Int/*Positions to substitute*/, String/*POS*/]
-                ]
-            ]
-
+        val examplesCfg = collection.mutable.HashMap.empty[String, Seq[NCExampleMdo]]
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
 
         case class Holder(request: NCContextWordRequest, elementId: String)
@@ -287,18 +280,18 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 if (elemNormExs.isEmpty)
                     throw new NCE(s"Examples not found for element: $elemId")
 
-                examplesCfg += elemId → elemNormExs.map { case (ex, idxs) ⇒ ex.map(_.word) → idxs }
+                examplesCfg += elemId → elemNormExs.map { case (ex, substs) ⇒ NCExampleMdo(ex.map(_.word), substs) }.toSeq
 
-                elemNormExs.flatMap { case (ex, idxs) ⇒
+                elemNormExs.flatMap { case (ex, substs) ⇒
                     // TODO: POSes for substitute
                     val exWords = ex.map(_.word)
 
-                    allElemSyns.toSeq.combinations(idxs.size).flatMap(comb ⇒ {
-                        require(comb.size == idxs.size)
+                    allElemSyns.toSeq.combinations(substs.size).flatMap(comb ⇒ {
+                        require(comb.size == substs.size)
 
-                        val words = substitute(exWords, idxs.zip(comb).map { case ((idx, pos), w) ⇒ Word(w, idx, pos) })
+                        val words = substitute(exWords, substs.zip(comb).map { case ((idx, pos), w) ⇒ Word(w, idx, pos) })
 
-                        idxs.keys.map(NCContextWordRequest(words, _))
+                        substs.keys.map(NCContextWordRequest(words, _))
                     })
                 }.toSeq.map(req ⇒ Holder(req, elemId))
             }.toSeq
@@ -339,7 +332,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             groups.foreach { case (elemId, elemGroups) ⇒
                 tbl += (s"Element ID: '$elemId'", "", "", "")
 
-                def f(d: Double): String = "%1.10f" format d
+                def f(d: Double): String = "%1.3f" format d
 
                 elemGroups.
                     sortBy(-_.factor).
