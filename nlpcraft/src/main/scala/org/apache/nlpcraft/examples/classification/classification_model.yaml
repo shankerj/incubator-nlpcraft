@@ -26,7 +26,7 @@ name: "Classification Example Model"
 version: "1.0"
 description: "Classification example model."
 examples:
-  - "I like drive my new Ford"
+  - "I like drive my new BMW"
   - "BMW has the best engine"
   - "A wild cat is very dangerous"
   - "A fox eats hens"
@@ -39,7 +39,6 @@ elements:
     description: "Any car brands"
     values:
       - name: "BMW"
-      - name: "Ford"
     contextWordSupport: true
   - id: "class:animal"
     description: "Any animal"
