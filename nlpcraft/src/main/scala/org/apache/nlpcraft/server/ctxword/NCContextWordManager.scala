@@ -35,6 +35,7 @@ import org.apache.nlpcraft.common.ascii.NCAsciiTable
 import org.apache.nlpcraft.common.config.NCConfigurable
 import org.apache.nlpcraft.common.nlp.core.NCNlpCoreManager
 import org.apache.nlpcraft.common.{NCE, NCService}
+import org.apache.nlpcraft.server.ctxword.NCContextWordParameter._
 import org.apache.nlpcraft.server.ignite.NCIgniteInstance
 import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo, NCExampleMdo}
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
@@ -59,15 +60,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     private final val CONVERTER = new DefaultNameConverter
     private final val POS_PLURALS = Set("NNS", "NNPS")
 
-    // Configuration request limit for each processed example.
-    private final val CONF_LIMIT = 1000
-    // Minimal score for requested words for each processed example.
-    private final val CONF_MIN_SCORE = 1
-    // If we have a lot of context words candidates, we choose top 50%.
-    private final val CONF_TOP_FACTOR = 0.5
-    // If we have small context words candidates count, we choose at least 3.
-    private final val CONF_TOP_MIN = 3
-
     @volatile private var url: Option[String] = _
     @volatile private var parser: NCNlpParser = _
     @volatile private var cache: IgniteCache[NCContextWordRequest, Seq[NCContextWordResponse]] = _
@@ -83,6 +75,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         min_bert: Double
     )
 
+    // We suppose that all configured values are NN or NNP (noun, singular form)
     private case class Word(text: String, index: Int, examplePos: String)
 
     private final val HANDLER: ResponseHandler[Seq[Seq[Suggestion]]] =
@@ -179,8 +172,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }
         }
 
-        logger.whenInfoEnabled({
-            logger.info(s"Request executed: \n${
+        logger.whenTraceEnabled({
+            logger.trace(s"Request executed: \n${
                 new GsonBuilder().
                     setPrettyPrinting().
                     create.
@@ -228,7 +221,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         template.zipWithIndex.map {  case (templ, i) ⇒
             substMap.get(i) match {
-                // TODO: we suppose that all configured values are NN (noun, singular form)
                 case Some(subst) ⇒
                     if (POS_PLURALS.contains(subst.examplePos)) CONVERTER.pluralize(subst.text) else subst.text
                 case None ⇒
@@ -283,7 +275,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 examplesCfg += elemId → elemNormExs.map { case (ex, substs) ⇒ NCExampleMdo(ex.map(_.word), substs) }.toSeq
 
                 elemNormExs.flatMap { case (ex, substs) ⇒
-                    // TODO: POSes for substitute
                     val exWords = ex.map(_.word)
 
                     allElemSyns.toSeq.combinations(substs.size).flatMap(comb ⇒ {
@@ -325,27 +316,50 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             }
 
         logger.whenInfoEnabled({
-            val tbl = NCAsciiTable()
+            val tblWords = NCAsciiTable()
 
-            tbl #= ("Context word", "ContextWord score", "Count", "Total score")
+            tblWords #= ("Element", "Context word", "ContextWord score", "Count", "Total score")
 
             groups.foreach { case (elemId, elemGroups) ⇒
-                tbl += (s"Element ID: '$elemId'", "", "", "")
+                tblWords += (s"Element ID: '$elemId'", "", "", "", "")
 
                 def f(d: Double): String = "%1.3f" format d
 
                 elemGroups.
                     sortBy(-_.factor).
-                    foreach(g ⇒ tbl += (g.group.word.word, f(g.group.word.totalScore), g.group.count, f(g.factor)))
+                    foreach(g ⇒ tblWords += ("", g.group.word.word, f(g.group.word.totalScore), g.group.count, f(g.factor)))
             }
 
-            tbl.info(logger, Some(s"Context words for model: $mdlId"))
+            tblWords.info(logger, Some(s"Context words for model: $mdlId"))
+
+            val tblExamles = NCAsciiTable()
+
+            tblExamles #= ("Element", "Example (text and substitutions positions and POSes)")
+
+            examplesCfg.foreach { case (elemId, examples) ⇒
+                tblExamles += (s"Element ID: '$elemId'", "")
+
+                examples.foreach(e ⇒ {
+                    val txt = e.words.mkString(" ")
+                    val substs =
+                        e.substitutions.
+                            toSeq.
+                            sortBy { case (idx, _) ⇒ idx }.
+                            map { case (idx, pos) ⇒ s"$idx($pos)" }.
+                            mkString(", ")
+
+                    tblExamles += ("", s"$txt, [$substs]")
+                })
+            }
+
+            tblExamles.info(logger, Some(s"Examples for model: $mdlId"))
         })
 
         NCContextWordConfigMdo(
             synonyms,
             groups.map { case (elemId, seq) ⇒ elemId → seq.map(_.group.word.stem).toSet },
-            examplesCfg.toMap
+            examplesCfg.toMap,
+            examplesCfg.values.flatten.flatMap(_.substitutions.map { case (_, pos) ⇒ pos } ).toSet
         )
     }
 }

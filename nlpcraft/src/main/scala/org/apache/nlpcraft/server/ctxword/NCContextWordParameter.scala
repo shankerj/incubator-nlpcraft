@@ -18,6 +18,38 @@
 package org.apache.nlpcraft.server.ctxword
 
 /**
+  * All parameters.
+  */
+object NCContextWordParameter {
+    private final val DFLT_LIMIT = 20
+    private final val DFLT_TOTAL_SCORE = 0
+    private final val DFLT_FTEXT_SCORE = 0.25
+    private final val DFLT_BERT_SCORE = 0
+
+    // Configuration parameters.
+    // Configuration request limit for each processed example.
+    final val CONF_LIMIT = 1000
+    // Minimal score for requested words for each processed example.
+    final val CONF_MIN_SCORE = 1
+    // If we have a lot of context words candidates, we choose top 50%.
+    final val CONF_TOP_FACTOR = 0.5
+    // If we have small context words candidates count, we choose at least 3.
+    final val CONF_TOP_MIN = 3
+
+    // Enricher parameters.
+    // Configuration when we try to find context words for words nouns using initial sentence.
+    final val MIN_SENTENCE_SCORE = 0.5
+    final val MIN_SENTENCE_FTEXT = 0.5
+
+    // Configuration when we try to find context words for words nouns using substituted examples.
+    final val MIN_EXAMPLE_SCORE = 0.8
+    // Context words for all examples should satisfy it (not so strong)
+    final val MIN_EXAMPLE_ALL_FTEXT = 0.2
+    // At least on context word with this score must be found.
+    final val MIN_EXAMPLE_BEST_FTEXT = 0.5
+}
+
+/**
   * Default ContextWord server parameters.
   *
   * @param limit
@@ -26,8 +58,8 @@ package org.apache.nlpcraft.server.ctxword
   * @param bertScore
   */
 case class NCContextWordParameter(
-    limit: Int = 10,
-    totalScore: Double = 0,
-    ftextScore: Double = 0.25,
-    bertScore: Double = 0
+    limit: Int = NCContextWordParameter.DFLT_LIMIT,
+    totalScore: Double = NCContextWordParameter.DFLT_TOTAL_SCORE,
+    ftextScore: Double = NCContextWordParameter.DFLT_FTEXT_SCORE,
+    bertScore: Double = NCContextWordParameter.DFLT_BERT_SCORE
 )
