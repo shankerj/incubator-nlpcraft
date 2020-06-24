@@ -33,5 +33,6 @@ case class NCContextWordConfigMdo(
     @NCMdoField synonyms: Map[String /*Element ID*/, Map[String /*Synonym stem*/, String /*Value*/]],
     @NCMdoField contextWords: Map[String /*Element ID*/, Set[String]/*Stems*/],
     @NCMdoField examples: Map[String /*Element ID*/, Seq[NCExampleMdo]/*Examples*/],
-    @NCMdoField poses: Set[String]/*All possible POSes of context words*/
+    @NCMdoField poses: Set[String],/*All possible POSes of context words*/
+    @NCMdoField modelMeta: Map[String, AnyRef]
 )

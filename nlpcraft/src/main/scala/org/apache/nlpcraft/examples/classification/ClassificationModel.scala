@@ -17,10 +17,39 @@
 
 package org.apache.nlpcraft.examples.cars
 
+import java.util
+
 import org.apache.nlpcraft.model.{NCIntentTerm, _}
 
 // TODO:
 class ClassificationModel extends NCModelFileAdapter("org/apache/nlpcraft/examples/classification/classification_model.yaml") {
+    private def mkMap(
+        senTotalScore: Double,
+        senFtextScore: Double,
+        exampleTotalScore: Double,
+        exampleFtextScore: Double
+    ): java.util.Map[String, Double]  ={
+        val m = new java.util.HashMap[String, Double]()
+
+        m.put("min.sentence.total.score", senTotalScore)
+        m.put("min.sentence.ftext.score", senFtextScore)
+        m.put("min.example.total.score", exampleTotalScore)
+        m.put("min.example.ftext.score", exampleFtextScore)
+
+        m
+    }
+
+    // Optional.
+    override def getMetadata: util.Map[String, AnyRef] = {
+        val md = super.getMetadata
+
+        md.put("class:carBrand", mkMap(0.5, 0.5, 0.5, 0.5))
+        md.put("class:animal", mkMap(0.5, 0.5, 0.5, 0.5))
+        md.put("class:weather", mkMap(0.5, 0.5, 0.5, 0.5))
+
+        md
+    }
+
     @NCIntentRef("classification")
     def onMatch(
         @NCIntentTerm("brands") brands: Seq[NCToken],

@@ -35,7 +35,6 @@ import org.apache.nlpcraft.common.ascii.NCAsciiTable
 import org.apache.nlpcraft.common.config.NCConfigurable
 import org.apache.nlpcraft.common.nlp.core.NCNlpCoreManager
 import org.apache.nlpcraft.common.{NCE, NCService}
-import org.apache.nlpcraft.server.ctxword.NCContextWordParameter._
 import org.apache.nlpcraft.server.ignite.NCIgniteInstance
 import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo, NCExampleMdo}
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
@@ -49,6 +48,15 @@ import scala.util.control.Exception.catching
   *
   */
 object NCContextWordManager extends NCService with NCOpenCensusServerStats with NCIgniteInstance {
+    // Configuration request limit for each processed example.
+    private final val CONF_LIMIT = 1000
+    // Minimal score for requested words for each processed example.
+    private final val CONF_MIN_SCORE = 1
+    // If we have a lot of context words candidates, we choose top 50%.
+    private final val CONF_TOP_FACTOR = 0.5
+    // If we have small context words candidates count, we choose at least 3.
+    private final val CONF_TOP_MIN = 3
+
     private object Config extends NCConfigurable {
         lazy val url: Option[String] = getStringOpt("nlpcraft.server.ctxword.url")
     }
@@ -248,7 +256,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     def makeConfig(
         mdlId: String,
         ctxSyns: Map[String /*Element ID*/ , Map[String /*Value*/, Set[String] /*Values synonyms stems*/ ]],
-        examples: Set[String]
+        examples: Set[String],
+        modelMeta: Map[String, AnyRef]
     ): NCContextWordConfigMdo = {
         val synonyms =
             ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
@@ -359,7 +368,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             synonyms,
             groups.map { case (elemId, seq) ⇒ elemId → seq.map(_.group.word.stem).toSet },
             examplesCfg.toMap,
-            examplesCfg.values.flatten.flatMap(_.substitutions.map { case (_, pos) ⇒ pos } ).toSet
+            examplesCfg.values.flatten.flatMap(_.substitutions.map { case (_, pos) ⇒ pos } ).toSet,
+            modelMeta
         )
     }
 }

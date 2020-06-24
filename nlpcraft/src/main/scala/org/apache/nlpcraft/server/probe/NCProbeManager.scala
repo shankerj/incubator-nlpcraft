@@ -582,7 +582,8 @@ object NCProbeManager extends NCService {
                     version: String,
                     enabledBuiltInTokens: Set[String],
                     ctxSynonyms: Map[String, Map[String, Set[String]]],
-                    examples: Set[String]
+                    examples: Set[String],
+                    meta: Map[String, AnyRef]
                 )
 
                 val models =
@@ -592,7 +593,8 @@ object NCProbeManager extends NCService {
                         String,
                         java.util.Set[String],
                         java.util.Map[String, java.util.Map[String, java.util.Set[String]]],
-                        java.util.Set[String]
+                        java.util.Set[String],
+                        java.util.Map[String, AnyRef]
                     )]]("PROBE_MODELS").
                         map { case (
                                 mdlId,
@@ -600,7 +602,8 @@ object NCProbeManager extends NCService {
                                 mdlVer,
                                 enabledBuiltInToks,
                                 mlSyns,
-                                examples
+                                examples,
+                                meta
                             ) ⇒
                             ProbeModel(
                                 id = mdlId,
@@ -610,7 +613,8 @@ object NCProbeManager extends NCService {
                                 ctxSynonyms =
                                     mlSyns.asScala.
                                         map(p ⇒ p._1 → p._2.asScala.map(x ⇒ x._1 → x._2.asScala.toSet).toMap).toMap,
-                                examples = examples.asScala.toSet
+                                examples = examples.asScala.toSet,
+                                meta
                             )
                         }.toSet
 
@@ -634,7 +638,7 @@ object NCProbeManager extends NCService {
                                     enabledBuiltInTokens = m.enabledBuiltInTokens,
                                     ctxWordsConfig =
                                         if (m.ctxSynonyms.nonEmpty)
-                                            Some(NCContextWordManager.makeConfig(m.id, m.ctxSynonyms, m.examples))
+                                            Some(NCContextWordManager.makeConfig(m.id, m.ctxSynonyms, m.examples, m.meta))
                                         else
                                             None
                                 )

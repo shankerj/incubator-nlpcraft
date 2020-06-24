@@ -263,7 +263,8 @@ object NCConnectionManager extends NCService {
                                 new util.HashMap[String, util.Map[String, util.Set[String]]](
                                     ctxSyns.map(p ⇒ p._1 → p._2.map(x ⇒ x._1 → x._2.asJava).asJava).asJava
                                 ),
-                                new util.HashSet[String](mdl.getExamples)
+                                new util.HashSet[String](mdl.getExamples),
+                                mdl.getMetadata
                             )
                         })
                 ), cryptoKey)

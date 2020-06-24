@@ -23,13 +23,22 @@ import org.apache.nlpcraft.common.nlp.{NCNlpSentence, NCNlpSentenceNote ⇒ Note
 import org.apache.nlpcraft.server.ctxword.{NCContextWordManager, NCContextWordParameter, NCContextWordRequest, NCContextWordResponse}
 import org.apache.nlpcraft.server.mdo.{NCExampleMdo, NCContextWordConfigMdo ⇒ Config}
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnricher
-import org.apache.nlpcraft.server.ctxword.NCContextWordParameter._
 import org.jibx.schema.codegen.extend.DefaultNameConverter
-import org.apache.nlpcraft.server.ctxword.NCContextWordParameter._
 
 import scala.collection.Map
 
 object NCContextWordEnricher extends NCServerEnricher {
+    // Configuration when we try to find context words for words nouns using initial sentence.
+    private final val MIN_SENTENCE_SCORE = 0.5
+    private final val MIN_SENTENCE_FTEXT = 0.5
+
+    // Configuration when we try to find context words for words nouns using substituted examples.
+    private final val MIN_EXAMPLE_SCORE = 0.8
+    // Context words for all examples should satisfy it (not so strong)
+    private final val MIN_EXAMPLE_ALL_FTEXT = 0.2
+    // At least on context word with this score must be found.
+    private final val MIN_EXAMPLE_BEST_FTEXT = 0.5
+
     private final val CONVERTER = new DefaultNameConverter
 
     private final val POS_PLURALS = Set("NNS", "NNPS")
@@ -91,7 +100,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         val suggs =
             NCContextWordManager.suggest(
                 toks.map(t ⇒ NCContextWordRequest(words, t.index)),
-                NCContextWordParameter(totalScore = MIN_SENTENCE_SCORE, ftextScore = MIN_SENTENCE_FTEXT)
+                NCContextWordParameter(totalScore = totalScore, ftextScore = ftextScore)
             )
 
         require(toks.size == suggs.size)
@@ -110,7 +119,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         res
     }
 
-    private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
+    private def tryExamples(cfg: Config, toks: Seq[Token], totalScore: Double, ftextScore: Double): Map[Token, Holder] = {
         val examples = cfg.examples.toSeq
 
         case class V(elementId: String, example: String, token: Token)
@@ -137,7 +146,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         val allSuggs =
             NCContextWordManager.suggest(
                 allReqs.flatMap(_.requests),
-                NCContextWordParameter(totalScore = MIN_EXAMPLE_SCORE, ftextScore = MIN_EXAMPLE_ALL_FTEXT)
+                NCContextWordParameter(totalScore = totalScore, ftextScore = ftextScore / 2) // TODO:
             )
 
         require(allSuggs.size == allReqs.map(_.requests.size).sum)
@@ -159,7 +168,7 @@ object NCContextWordEnricher extends NCServerEnricher {
                     if (suggs.size == cfg.examples(elemId).size) {
                         val best = suggs.toSeq.minBy(p ⇒ (-p.ftextScore, -p.totalScore))
 
-                        if (best.ftextScore >= MIN_EXAMPLE_BEST_FTEXT)
+                        if (best.ftextScore >= ftextScore)
                             Some(tok → makeHolder(elemId, tok, best))
                         else
                             None
