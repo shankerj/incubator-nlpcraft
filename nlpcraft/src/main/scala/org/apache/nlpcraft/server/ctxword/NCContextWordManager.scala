@@ -48,14 +48,12 @@ import scala.util.control.Exception.catching
   *
   */
 object NCContextWordManager extends NCService with NCOpenCensusServerStats with NCIgniteInstance {
-    // Configuration request limit for each processed example.
-    private final val CONF_LIMIT = 1000
-    // Minimal score for requested words for each processed example.
-    private final val CONF_MIN_SCORE = 1
+    private final val CTX_WORDS_LIMIT = 1000
+    private final val CTX_WORDS_MON_SCORE = 1
     // If we have a lot of context words candidates, we choose top 50%.
-    private final val CONF_TOP_FACTOR = 0.5
+    private final val CTX_WORDS_TOP_FACTOR = 0.5
     // If we have small context words candidates count, we choose at least 3.
-    private final val CONF_TOP_MIN = 3
+    private final val CTX_WORDS_TOP_MIN = 3
 
     private object Config extends NCConfigurable {
         lazy val url: Option[String] = getStringOpt("nlpcraft.server.ctxword.url")
@@ -239,17 +237,17 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
     private def getTop[T](seq: Seq[T], getWeight: T ⇒ Double): Seq[T] = {
         require(seq.nonEmpty)
-        require(CONF_TOP_FACTOR > 0 && CONF_TOP_FACTOR < 1)
+        require(CTX_WORDS_TOP_FACTOR > 0 && CTX_WORDS_TOP_FACTOR < 1)
 
         val seqW = seq.map(p ⇒ p → getWeight(p)).sortBy(-_._2)
 
-        val limitSum = seqW.map { case (_, factor) ⇒ factor }.sum * CONF_TOP_FACTOR
+        val limitSum = seqW.map { case (_, factor) ⇒ factor }.sum * CTX_WORDS_TOP_FACTOR
 
         val v = new AtomicDouble(0)
 
         val top = for ((value, factor) ← seqW if v.getAndAdd(factor) < limitSum) yield value
 
-        if (top.size < CONF_TOP_MIN) seqW.take(CONF_TOP_MIN).map { case (value, _) ⇒ value } else top
+        if (top.size < CTX_WORDS_TOP_MIN) seqW.take(CTX_WORDS_TOP_MIN).map { case (value, _) ⇒ value } else top
     }
 
     @throws[NCE]
@@ -298,7 +296,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
         val allResp = suggest(
             allReqs.map(_.request),
-            NCContextWordParameter(limit = CONF_LIMIT, totalScore = CONF_MIN_SCORE)
+            NCContextWordParameter(limit = CTX_WORDS_LIMIT, totalScore = CTX_WORDS_MON_SCORE)
         )
 
         require(allResp.size == allReqs.size)

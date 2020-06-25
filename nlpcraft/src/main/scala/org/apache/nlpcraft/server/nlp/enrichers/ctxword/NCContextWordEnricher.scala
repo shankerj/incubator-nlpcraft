@@ -33,6 +33,8 @@ object NCContextWordEnricher extends NCServerEnricher {
     private final val POS_PLURALS = Set("NNS", "NNPS")
     private final val POS_SINGULAR = Set("NN", "NNP")
 
+    private final val CTX_WORDS_LIMIT = 1000
+
     private case class Word(text: String, index: Int, examplePos: String, wordPos: String)
     private case class Holder(
         elementId: String,
@@ -89,7 +91,12 @@ object NCContextWordEnricher extends NCServerEnricher {
         val suggs =
             NCContextWordManager.suggest(
                 toks.map(t ⇒ NCContextWordRequest(words, t.index)),
-                NCContextWordParameter(totalScore = f.getMinTotalSentence, ftextScore = f.getMinTotalExample)
+                NCContextWordParameter(
+                    limit = CTX_WORDS_LIMIT,
+                    totalScore = f.getMinTotalSentence,
+                    ftextScore = f.getMinTotalExample
+
+                )
             )
 
         require(toks.size == suggs.size)
@@ -142,7 +149,8 @@ object NCContextWordEnricher extends NCServerEnricher {
         val allSuggs =
             NCContextWordManager.suggest(
                 allReqs.flatMap(_.requests),
-                NCContextWordParameter(totalScore = f.getMinTotalExample, ftextScore = f.getMinFtextExample / 2) // TODO:
+                // Ftext factor - used default.
+                NCContextWordParameter(limit = CTX_WORDS_LIMIT, totalScore = f.getMinTotalExample)
             )
 
         require(allSuggs.size == allReqs.map(_.requests.size).sum)
