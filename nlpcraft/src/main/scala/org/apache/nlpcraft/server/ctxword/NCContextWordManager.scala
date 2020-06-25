@@ -277,7 +277,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }.toSeq.map(req ⇒ Holder(req, elemId))
             }.toSeq
 
-        // TODO: use for restrict
+        // TODO: use for restrict context words.
         val f =
             NCContextWordFactors(
                 modelMeta,

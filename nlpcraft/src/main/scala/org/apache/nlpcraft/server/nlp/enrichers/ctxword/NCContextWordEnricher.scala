@@ -43,7 +43,6 @@ object NCContextWordEnricher extends NCServerEnricher {
     private final val MIN_EXAMPLE_SCORE = 0.8
     private final val MIN_EXAMPLE_FTEXT = 0.5
 
-
     private case class Word(text: String, index: Int, examplePos: String, wordPos: String)
     private case class Holder(
         elementId: String,

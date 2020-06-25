@@ -30,6 +30,7 @@ case class NCContextWordFactors(
     private val defaults: Map[String, Double]
 ) extends LazyLogging {
     private val m: Map[String, Map[String, Double]] = initialize()
+    private val mins: Map[String, Double] = defaults.keySet.map(name ⇒ name → m.map(p ⇒ p._2(name)).min).toMap
 
     private def initialize(): Map[String, Map[String, Double]] = {
         val allDefs = elementsIds.map(id ⇒ id → defaults).toMap
@@ -43,12 +44,8 @@ case class NCContextWordFactors(
                             case Some(elemDflts) ⇒
                                 val unsexp = elemDflts.keySet -- elemMeta.keySet
 
-                                if (unsexp.nonEmpty) {
-                                    println("elemData="+elemMeta.keySet)
-                                    println("elemDefaults="+elemDflts.keySet)
-
+                                if (unsexp.nonEmpty)
                                     logger.warn(s"Unexpected factors: {$unsexp} of element ID: '$elemId'.")
-                                }
 
                                 Some(elemId → (elemDflts ++ elemMeta))
                             case None ⇒
@@ -58,11 +55,9 @@ case class NCContextWordFactors(
                         }
                     }.toMap
 
-            case None ⇒ Map.empty ++ allDefs
+            case None ⇒ allDefs
         }
     }
-
-    private val mins: Map[String, Double] = defaults.keySet.map(name ⇒ name → m.map(p ⇒ p._2(name)).min).toMap
 
     def get(elemId: String, param: String): Double = m(elemId)(param)
     def getMin(param: String): Double = mins(param)
