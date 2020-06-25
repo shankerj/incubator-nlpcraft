@@ -23,16 +23,22 @@ import org.apache.nlpcraft.model.{NCIntentTerm, _}
 
 // TODO:
 class ClassificationModel extends NCModelFileAdapter("org/apache/nlpcraft/examples/classification/classification_model.yaml") {
-    private def mkMap(
+    private def mkFactors(
+        minElementTotalScore: Double,
+        minElementPercent: Double,
         senTotalScore: Double,
         senFtextScore: Double,
         exampleTotalScore: Double,
         exampleFtextScore: Double
-    ): java.util.Map[String, Double]  ={
+    ): java.util.Map[String, Double]  = {
         val m = new java.util.HashMap[String, Double]()
+
+        m.put("min.element.total.score", minElementTotalScore)
+        m.put("min.element.percent", minElementPercent)
 
         m.put("min.sentence.total.score", senTotalScore)
         m.put("min.sentence.ftext.score", senFtextScore)
+
         m.put("min.example.total.score", exampleTotalScore)
         m.put("min.example.ftext.score", exampleFtextScore)
 
@@ -43,13 +49,13 @@ class ClassificationModel extends NCModelFileAdapter("org/apache/nlpcraft/exampl
     override def getMetadata: util.Map[String, AnyRef] = {
         val md = super.getMetadata
 
-        val factors = new java.util.HashMap[String, java.util.Map[String, Double]]()
+        val elementFactors = new java.util.HashMap[String, java.util.Map[String, Double]]()
 
-        factors.put("class:carBrand", mkMap(0.5, 0.5, 0.5, 0.5))
-        factors.put("class:animal", mkMap(0.5, 0.5, 0.5, 0.5))
-        factors.put("class:weather", mkMap(0.5, 0.5, 0.5, 0.5))
+        elementFactors.put("class:carBrand", mkFactors(1, 0, 0.5, 0.5, 0.5, 0.5))
+        elementFactors.put("class:animal", mkFactors(1, 0, 0.5, 0.5, 0.5, 0.5))
+        elementFactors.put("class:weather", mkFactors(1, 0, 0.5, 0.5, 0.5, 0.5))
 
-        md.put("ctx.words.factors", factors)
+        md.put("ctx.words.factors", elementFactors)
 
         md
     }

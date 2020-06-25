@@ -18,9 +18,8 @@
 package org.apache.nlpcraft.server.ctxword
 
 import java.net.ConnectException
-import java.util.{List ⇒ JList}
+import java.util.{List => JList}
 
-import com.google.common.util.concurrent.AtomicDouble
 import com.google.gson.reflect.TypeToken
 import com.google.gson.{Gson, GsonBuilder}
 import io.opencensus.trace.Span
@@ -49,11 +48,9 @@ import scala.util.control.Exception.catching
   */
 object NCContextWordManager extends NCService with NCOpenCensusServerStats with NCIgniteInstance {
     private final val CTX_WORDS_LIMIT = 1000
-    private final val CTX_WORDS_MON_SCORE = 1
-    // If we have a lot of context words candidates, we choose top 50%.
-    private final val CTX_WORDS_TOP_FACTOR = 0.5
-    // If we have small context words candidates count, we choose at least 3.
-    private final val CTX_WORDS_TOP_MIN = 3
+
+    private final val CTX_WORDS_MIN_SCORE = 1
+    private final val CTX_WORDS_PERCENT = 0.5
 
     private object Config extends NCConfigurable {
         lazy val url: Option[String] = getStringOpt("nlpcraft.server.ctxword.url")
@@ -235,20 +232,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         }
     }
 
-    private def getTop[T](seq: Seq[T], getWeight: T ⇒ Double): Seq[T] = {
-        require(seq.nonEmpty)
-        require(CTX_WORDS_TOP_FACTOR > 0 && CTX_WORDS_TOP_FACTOR < 1)
-
-        val seqW = seq.map(p ⇒ p → getWeight(p)).sortBy(-_._2)
-
-        val limitSum = seqW.map { case (_, factor) ⇒ factor }.sum * CTX_WORDS_TOP_FACTOR
-
-        val v = new AtomicDouble(0)
-
-        val top = for ((value, factor) ← seqW if v.getAndAdd(factor) < limitSum) yield value
-
-        if (top.size < CTX_WORDS_TOP_MIN) seqW.take(CTX_WORDS_TOP_MIN).map { case (value, _) ⇒ value } else top
-    }
 
     @throws[NCE]
     def makeConfig(
@@ -294,9 +277,20 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }.toSeq.map(req ⇒ Holder(req, elemId))
             }.toSeq
 
+        // TODO: use for restrict
+        val f =
+            NCContextWordFactors(
+                modelMeta,
+                ctxSyns.keySet,
+                Map(
+                    "min.element.total.score" → CTX_WORDS_MIN_SCORE,
+                    "min.element.percent" → CTX_WORDS_PERCENT
+                )
+            )
+
         val allResp = suggest(
             allReqs.map(_.request),
-            NCContextWordParameter(limit = CTX_WORDS_LIMIT, totalScore = CTX_WORDS_MON_SCORE)
+            NCContextWordParameter(limit = CTX_WORDS_LIMIT, totalScore = f.getMin("min.element.total.score"))
         )
 
         require(allResp.size == allReqs.size)
@@ -312,13 +306,11 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
 
                 elemId →
-                    getTop(
-                        seq = suggs.
+                        suggs.
                             groupBy(_.stem).
                             map { case (_, group) ⇒ Group(group.minBy(-_.totalScore), group.size) }.
                             toSeq.
-                            map(group ⇒ GroupFactor(group, group.word.totalScore * group.count / suggs.size)),
-                        getWeight = (g: GroupFactor) ⇒ g.factor
+                            map(group ⇒ GroupFactor(group, group.word.totalScore * group.count / suggs.size)
                     )
             }
 

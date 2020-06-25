@@ -28,6 +28,8 @@ description: "Classification example model."
 examples:
   - "I like drive my new BMW"
   - "BMW has the best engine"
+  - "BMW is the best German car"
+  - "New BMW models are very impressive"
   - "A wild cat is very dangerous"
   - "A fox eats hens"
   - "The fox was already in your chicken house"
