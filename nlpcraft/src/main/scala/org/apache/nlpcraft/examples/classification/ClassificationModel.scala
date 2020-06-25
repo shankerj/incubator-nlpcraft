@@ -43,9 +43,13 @@ class ClassificationModel extends NCModelFileAdapter("org/apache/nlpcraft/exampl
     override def getMetadata: util.Map[String, AnyRef] = {
         val md = super.getMetadata
 
-        md.put("class:carBrand", mkMap(0.5, 0.5, 0.5, 0.5))
-        md.put("class:animal", mkMap(0.5, 0.5, 0.5, 0.5))
-        md.put("class:weather", mkMap(0.5, 0.5, 0.5, 0.5))
+        val factors = new java.util.HashMap[String, java.util.Map[String, Double]]()
+
+        factors.put("class:carBrand", mkMap(0.5, 0.5, 0.5, 0.5))
+        factors.put("class:animal", mkMap(0.5, 0.5, 0.5, 0.5))
+        factors.put("class:weather", mkMap(0.5, 0.5, 0.5, 0.5))
+
+        md.put("ctx.words.factors", factors)
 
         md
     }

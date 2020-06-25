@@ -35,4 +35,7 @@ case class NCContextWordConfigMdo(
     @NCMdoField examples: Map[String /*Element ID*/, Seq[NCExampleMdo]/*Examples*/],
     @NCMdoField poses: Set[String],/*All possible POSes of context words*/
     @NCMdoField modelMeta: Map[String, AnyRef]
-)
+) {
+    require(synonyms.size == contextWords.size)
+    require(synonyms.size == examples.size)
+}

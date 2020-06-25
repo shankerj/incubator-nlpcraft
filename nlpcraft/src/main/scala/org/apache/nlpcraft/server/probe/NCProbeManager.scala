@@ -614,7 +614,7 @@ object NCProbeManager extends NCService {
                                     mlSyns.asScala.
                                         map(p ⇒ p._1 → p._2.asScala.map(x ⇒ x._1 → x._2.asScala.toSet).toMap).toMap,
                                 examples = examples.asScala.toSet,
-                                meta
+                                meta.asScala.toMap
                             )
                         }.toSet
 
