@@ -18,7 +18,8 @@
 package org.apache.nlpcraft.server.ctxword
 
 import java.net.ConnectException
-import java.util.{List => JList}
+import java.util
+import java.util.{List ⇒ JList}
 
 import com.google.gson.reflect.TypeToken
 import com.google.gson.{Gson, GsonBuilder}
@@ -35,12 +36,13 @@ import org.apache.nlpcraft.common.config.NCConfigurable
 import org.apache.nlpcraft.common.nlp.core.NCNlpCoreManager
 import org.apache.nlpcraft.common.{NCE, NCService}
 import org.apache.nlpcraft.server.ignite.NCIgniteInstance
-import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo, NCExampleMdo}
+import org.apache.nlpcraft.server.mdo.{NCContextWordConfigMdo, NCContextWordFactors, NCExampleMdo}
 import org.apache.nlpcraft.server.nlp.core.{NCNlpParser, NCNlpServerManager, NCNlpWord}
 import org.apache.nlpcraft.server.opencensus.NCOpenCensusServerStats
 import org.jibx.schema.codegen.extend.DefaultNameConverter
 
 import scala.collection.JavaConverters._
+import scala.collection.Map
 import scala.util.control.Exception.catching
 
 /**
@@ -49,8 +51,14 @@ import scala.util.control.Exception.catching
 object NCContextWordManager extends NCService with NCOpenCensusServerStats with NCIgniteInstance {
     private final val CTX_WORDS_LIMIT = 1000
 
-    private final val CTX_WORDS_MIN_SCORE = 1
-    private final val CTX_WORDS_PERCENT = 0.5
+    private final val CFG_DEFAULTS = Map(
+        "min.element.total.score" → 1.0,
+        "min.element.percent" → 0.5,
+        "min.sentence.total.score" → 0.5,
+        "min.sentence.ftext.score" → 0.5,
+        "min.example.total.score" → 0.8,
+        "min.example.ftext.score" → 0.5
+    )
 
     private object Config extends NCConfigurable {
         lazy val url: Option[String] = getStringOpt("nlpcraft.server.ctxword.url")
@@ -132,6 +140,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val post = new HttpPost(url.get)
 
+            println("!!!="+GSON.toJson(restReq))
+
             post.setHeader("Content-Type", "application/json")
             post.setEntity(new StringEntity(GSON.toJson(restReq), "UTF-8"))
 
@@ -175,8 +185,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }
         }
 
-        logger.whenTraceEnabled({
-            logger.trace(s"Request executed: \n${
+        logger.whenInfoEnabled({
+            logger.info(s"Request executed: \n${
                 new GsonBuilder().
                     setPrettyPrinting().
                     create.
@@ -232,6 +242,34 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         }
     }
 
+    private def mkElementsFactors(
+        meta: Map[String, AnyRef], defaults: Map[String, Double], elementsIds: Set[String]
+    ): Map[String, Map[String, Double]] = {
+        val allDefs = elementsIds.map(id ⇒ id → defaults).toMap
+
+        meta.get("ctx.words.factors") match {
+            case Some(v) ⇒
+                v.asInstanceOf[util.HashMap[String, util.Map[String, Double]]].asScala.
+                    map(p ⇒ p._1 → p._2.asScala).
+                    flatMap { case (elemId, elemMeta) ⇒
+                        allDefs.get(elemId) match {
+                            case Some(elemDflts) ⇒
+                                val unexp = elemDflts.keySet.diff(elemMeta.keySet)
+
+                                if (unexp.nonEmpty)
+                                    logger.warn(s"Unexpected factors: {$unexp} of element ID: '$elemId'.")
+
+                                Some(elemId → (elemDflts ++ elemMeta))
+                            case None ⇒
+                                logger.warn(s"Unexpected element ID: '$elemId' data skipped.")
+
+                                None
+                        }
+                    }.toMap
+
+            case None ⇒ allDefs
+        }
+    }
 
     @throws[NCE]
     def makeConfig(
@@ -240,10 +278,9 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         examples: Set[String],
         modelMeta: Map[String, AnyRef]
     ): NCContextWordConfigMdo = {
-        val synonyms =
-            ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
+        val syns = ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
 
-        val examplesCfg = collection.mutable.HashMap.empty[String, Seq[NCExampleMdo]]
+        val exCfg = collection.mutable.HashMap.empty[String, Seq[NCExampleMdo]]
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
 
         case class Holder(request: NCContextWordRequest, elementId: String)
@@ -262,7 +299,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 if (elemNormExs.isEmpty)
                     throw new NCE(s"Examples not found for element: $elemId")
 
-                examplesCfg += elemId → elemNormExs.map { case (ex, substs) ⇒ NCExampleMdo(ex.map(_.word), substs) }.toSeq
+                exCfg += elemId → elemNormExs.map { case (ex, substs) ⇒ NCExampleMdo(ex.map(_.word), substs) }.toSeq
 
                 elemNormExs.flatMap { case (ex, substs) ⇒
                     val exWords = ex.map(_.word)
@@ -277,47 +314,49 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 }.toSeq.map(req ⇒ Holder(req, elemId))
             }.toSeq
 
-        // TODO: use for restrict context words.
-        val f =
-            NCContextWordFactors(
-                modelMeta,
-                ctxSyns.keySet,
-                Map(
-                    "min.element.total.score" → CTX_WORDS_MIN_SCORE,
-                    "min.element.percent" → CTX_WORDS_PERCENT
-                )
-            )
+        val elemFs = mkElementsFactors(modelMeta, CFG_DEFAULTS, ctxSyns.keySet.toSet)
+        val fs = NCContextWordFactors(elemFs, elemFs.head._2.keySet.map(name ⇒ name → elemFs.map(p ⇒ p._2(name)).min).toMap)
 
         val allResp = suggest(
             allReqs.map(_.request),
-            NCContextWordParameter(limit = CTX_WORDS_LIMIT, totalScore = f.getMin("min.element.total.score"))
+            NCContextWordParameter(limit = CTX_WORDS_LIMIT, totalScore = fs.getMin("min.element.total.score"))
         )
 
         require(allResp.size == allReqs.size)
 
         case class Group(word: NCContextWordResponse, count: Int)
-        case class GroupFactor(group: Group, factor: Double)
+        case class GroupFactor(group: Group, percent: Double)
 
         val groups =
             allReqs.zip(allResp).groupBy { case (h, _) ⇒ h.elementId }.map { case (elemId, seq) ⇒
-                val suggs = seq.flatMap { case (_, seq) ⇒ seq }
+                val cnt = exCfg(elemId).size.toDouble
+
+                val suggs = seq.
+                    flatMap { case (_, seq) ⇒ seq }.
+                    filter(_.totalScore >= fs.get(elemId, "min.element.total.score")).
+                    groupBy(_.stem).
+                    map { case (_, g) ⇒ GroupFactor(Group(g.minBy(-_.totalScore), g.size), g.size / cnt) }.
+                    toSeq.
+                    filter(_.percent >= fs.get(elemId, "min.element.percent"))
+
+                println("eelem="  +elemId)
+                println("exCnt="  +cnt)
+                println("seq="  +seq.size)
+                println("suggs"  +suggs.size)
+                println("all"  +seq.flatMap(_._2.map(_.word)).mkString("|"))
+
 
                 if (suggs.isEmpty)
                     throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
 
-                elemId →
-                        suggs.
-                            groupBy(_.stem).
-                            map { case (_, group) ⇒ Group(group.minBy(-_.totalScore), group.size) }.
-                            toSeq.
-                            map(group ⇒ GroupFactor(group, group.word.totalScore * group.count / suggs.size)
-                    )
+                elemId → suggs
             }
 
         logger.whenInfoEnabled({
             val tblWords = NCAsciiTable()
 
-            tblWords #= ("Element", "Context word", "ContextWord score", "Count", "Total score")
+            // TODO: > 100
+            tblWords #= ("Element", "Context word", "ContextWord score", "Count", "Percent")
 
             groups.foreach { case (elemId, elemGroups) ⇒
                 tblWords += (s"Element ID: '$elemId'", "", "", "", "")
@@ -325,8 +364,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 def f(d: Double): String = "%1.3f" format d
 
                 elemGroups.
-                    sortBy(-_.factor).
-                    foreach(g ⇒ tblWords += ("", g.group.word.word, f(g.group.word.totalScore), g.group.count, f(g.factor)))
+                    sortBy(-_.percent).
+                    foreach(g ⇒ tblWords += ("", g.group.word.word, f(g.group.word.totalScore), g.group.count, f(g.percent)))
             }
 
             tblWords.info(logger, Some(s"Context words for model: $mdlId"))
@@ -335,7 +374,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             tblExamles #= ("Element", "Example (text and substitutions positions and POSes)")
 
-            examplesCfg.foreach { case (elemId, examples) ⇒
+            exCfg.foreach { case (elemId, examples) ⇒
                 tblExamles += (s"Element ID: '$elemId'", "")
 
                 examples.foreach(e ⇒ {
@@ -352,14 +391,16 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             }
 
             tblExamles.info(logger, Some(s"Examples for model: $mdlId"))
+
+            // TODO: log factors
         })
 
         NCContextWordConfigMdo(
-            synonyms,
+            syns,
             groups.map { case (elemId, seq) ⇒ elemId → seq.map(_.group.word.stem).toSet },
-            examplesCfg.toMap,
-            examplesCfg.values.flatten.flatMap(_.substitutions.map { case (_, pos) ⇒ pos } ).toSet,
-            modelMeta
+            exCfg.toMap,
+            exCfg.values.flatten.flatMap(_.substitutions.map { case (_, pos) ⇒ pos } ).toSet,
+            fs
         )
     }
 }

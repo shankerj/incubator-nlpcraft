@@ -35,14 +35,6 @@ object NCContextWordEnricher extends NCServerEnricher {
 
     private final val CTX_WORDS_LIMIT = 1000
 
-    // Configuration when we try to find context words for words nouns using initial sentence.
-    private final val MIN_SENTENCE_SCORE = 0.5
-    private final val MIN_SENTENCE_FTEXT = 0.5
-
-    // Configuration when we try to find context words for words nouns using substituted examples.
-    private final val MIN_EXAMPLE_SCORE = 0.8
-    private final val MIN_EXAMPLE_FTEXT = 0.5
-
     private case class Word(text: String, index: Int, examplePos: String, wordPos: String)
     private case class Holder(
         elementId: String,
@@ -93,7 +85,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         res
     }
 
-    private def trySentence(cfg: Config, toks: Seq[Token], ns: NCNlpSentence, f: NCContextWordFactors): Map[Token, Holder] = {
+    private def trySentence(cfg: Config, toks: Seq[Token], ns: NCNlpSentence): Map[Token, Holder] = {
         val words = ns.tokens.map(_.origText)
 
         val suggs =
@@ -101,8 +93,8 @@ object NCContextWordEnricher extends NCServerEnricher {
                 toks.map(t ⇒ NCContextWordRequest(words, t.index)),
                 NCContextWordParameter(
                     limit = CTX_WORDS_LIMIT,
-                    totalScore = f.getMin("min.sentence.total.score"),
-                    ftextScore = f.getMin("min.sentence.ftext.score")
+                    totalScore = cfg.factors.getMin("min.sentence.total.score"),
+                    ftextScore = cfg.factors.getMin("min.sentence.ftext.score")
 
                 )
             )
@@ -116,8 +108,8 @@ object NCContextWordEnricher extends NCServerEnricher {
                         cfg.contextWords.toStream.flatMap { case (elemId, stems) ⇒
                             if (
                                 stems.contains(sugg.stem) &&
-                                sugg.totalScore >= f.get(elemId, "min.sentence.total.score") &&
-                                sugg.ftextScore >= f.get(elemId, "min.sentence.ftext.score")
+                                sugg.totalScore >= cfg.factors.get(elemId, "min.sentence.total.score") &&
+                                sugg.ftextScore >= cfg.factors.get(elemId, "min.sentence.ftext.score")
                             )
                                 Some(tok → makeHolder(elemId, tok, sugg))
                             else
@@ -130,7 +122,7 @@ object NCContextWordEnricher extends NCServerEnricher {
         res
     }
 
-    private def tryExamples(cfg: Config, toks: Seq[Token], f: NCContextWordFactors): Map[Token, Holder] = {
+    private def tryExamples(cfg: Config, toks: Seq[Token]): Map[Token, Holder] = {
         val examples = cfg.examples.toSeq
 
         case class V(elementId: String, example: String, token: Token)
@@ -158,7 +150,10 @@ object NCContextWordEnricher extends NCServerEnricher {
             NCContextWordManager.suggest(
                 allReqs.flatMap(_.requests),
                 // Ftext used as default value.
-                NCContextWordParameter(limit = CTX_WORDS_LIMIT, totalScore = f.getMin("min.example.total.score"))
+                NCContextWordParameter(
+                    limit = CTX_WORDS_LIMIT,
+                    totalScore = cfg.factors.getMin("min.example.total.score")
+                )
             )
 
         require(allSuggs.size == allReqs.map(_.requests.size).sum)
@@ -180,8 +175,8 @@ object NCContextWordEnricher extends NCServerEnricher {
                     if (suggs.size == cfg.examples(elemId).size) {
                         suggs.toSeq.
                             filter(sugg ⇒
-                                sugg.totalScore >= f.get(elemId, "min.example.total.score") &&
-                                sugg.ftextScore >= f.get(elemId, "min.example.ftext.score")
+                                sugg.totalScore >= cfg.factors.get(elemId, "min.example.total.score") &&
+                                sugg.ftextScore >= cfg.factors.get(elemId, "min.example.ftext.score")
 
                             ).
                             sortBy(p ⇒ (-p.ftextScore, -p.totalScore)).headOption match {
@@ -243,22 +238,10 @@ object NCContextWordEnricher extends NCServerEnricher {
                         def getOther: Seq[Token] = toks.filter(t ⇒ !m.contains(t))
 
                         if (m.size != toks.length) {
-                            val f =
-                                NCContextWordFactors(
-                                    cfg.modelMeta,
-                                    cfg.examples.keySet,
-                                    Map(
-                                        "min.sentence.total.score" → MIN_SENTENCE_SCORE,
-                                        "min.sentence.ftext.score" → MIN_SENTENCE_FTEXT,
-                                        "min.example.total.score" → MIN_EXAMPLE_SCORE,
-                                        "min.example.ftext.score" → MIN_EXAMPLE_FTEXT
-                                    )
-                                )
-
-                            m ++= trySentence(cfg, getOther, sen, f)
+                            m ++= trySentence(cfg, getOther, sen)
 
                             if (m.size != toks.length)
-                                m ++= tryExamples(cfg, getOther, f)
+                                m ++= tryExamples(cfg, getOther)
                         }
 
                         m.foreach {

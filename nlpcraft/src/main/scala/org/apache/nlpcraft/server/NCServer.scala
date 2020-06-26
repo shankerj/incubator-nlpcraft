@@ -122,11 +122,13 @@ object NCServer extends App with NCIgniteInstance with LazyLogging with NCOpenCe
                     NCUserManager.start(span)
                     NCCompanyManager.start(span)
                 },
-                () ⇒ NCProbeManager.start(span),
+                () ⇒ {
+                    NCContextWordManager.start(span)
+                    NCProbeManager.start(span)
+                },
                 () ⇒ NCFeedbackManager.start(span)
             )
 
-            NCContextWordManager.start(span)
             NCQueryManager.start(span)
             NCRestManager.start(span)
     

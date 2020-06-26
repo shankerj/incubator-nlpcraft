@@ -19,11 +19,25 @@ package org.apache.nlpcraft.server.mdo
 
 import org.apache.nlpcraft.server.mdo.impl._
 
+import scala.collection.{Map, Set}
+
 /**
   *
   */
 @NCMdoEntity(sql = false)
 case class NCExampleMdo(@NCMdoField words: Seq[String], @NCMdoField substitutions: Map[Int/*Position*/, String/*POS*/])
+
+/**
+  *
+  */
+@NCMdoEntity(sql = false)
+case class NCContextWordFactors(
+    @NCMdoField elementsFactors: Map[String, Map[String, Double]],
+    @NCMdoField minimalFactors: Map[String, Double]
+) {
+    def get(elemId: String, param: String): Double = elementsFactors(elemId)(param)
+    def getMin(param: String): Double = minimalFactors(param)
+}
 
 /**
   * Probe model context word config MDO.
@@ -34,7 +48,7 @@ case class NCContextWordConfigMdo(
     @NCMdoField contextWords: Map[String /*Element ID*/, Set[String]/*Stems*/],
     @NCMdoField examples: Map[String /*Element ID*/, Seq[NCExampleMdo]/*Examples*/],
     @NCMdoField poses: Set[String],/*All possible POSes of context words*/
-    @NCMdoField modelMeta: Map[String, AnyRef]
+    @NCMdoField factors: NCContextWordFactors
 ) {
     require(synonyms.size == contextWords.size)
     require(synonyms.size == examples.size)

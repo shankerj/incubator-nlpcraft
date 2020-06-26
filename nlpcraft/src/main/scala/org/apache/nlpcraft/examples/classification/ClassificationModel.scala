@@ -31,31 +31,31 @@ class ClassificationModel extends NCModelFileAdapter("org/apache/nlpcraft/exampl
         exampleTotalScore: Double,
         exampleFtextScore: Double
     ): java.util.Map[String, Double]  = {
-        val m = new java.util.HashMap[String, Double]()
+        val factors = new java.util.HashMap[String, Double]()
 
-        m.put("min.element.total.score", minElementTotalScore)
-        m.put("min.element.percent", minElementPercent)
+        factors.put("min.element.total.score", minElementTotalScore)
+        factors.put("min.element.percent", minElementPercent)
 
-        m.put("min.sentence.total.score", senTotalScore)
-        m.put("min.sentence.ftext.score", senFtextScore)
+        factors.put("min.sentence.total.score", senTotalScore)
+        factors.put("min.sentence.ftext.score", senFtextScore)
 
-        m.put("min.example.total.score", exampleTotalScore)
-        m.put("min.example.ftext.score", exampleFtextScore)
+        factors.put("min.example.total.score", exampleTotalScore)
+        factors.put("min.example.ftext.score", exampleFtextScore)
 
-        m
+        factors
     }
 
     // Optional.
     override def getMetadata: util.Map[String, AnyRef] = {
         val md = super.getMetadata
 
-        val elementFactors = new java.util.HashMap[String, java.util.Map[String, Double]]()
+        val elemFactors = new java.util.HashMap[String, java.util.Map[String, Double]]()
 
-        elementFactors.put("class:carBrand", mkFactors(1, 0, 0.5, 0.5, 0.5, 0.5))
-        elementFactors.put("class:animal", mkFactors(1, 0, 0.5, 0.5, 0.5, 0.5))
-        elementFactors.put("class:weather", mkFactors(1, 0, 0.5, 0.5, 0.5, 0.5))
+        elemFactors.put("class:carBrand", mkFactors(1, .1, 0.5, 0.5, 0.5, 0.5))
+        elemFactors.put("class:animal", mkFactors(1, 0.5, 0.5, 0.5, 0.5, 0.5))
+        elemFactors.put("class:weather", mkFactors(1, 0.5, 0.5, 0.5, 0.5, 0.5))
 
-        md.put("ctx.words.factors", elementFactors)
+        md.put("ctx.words.factors", elemFactors)
 
         md
     }
