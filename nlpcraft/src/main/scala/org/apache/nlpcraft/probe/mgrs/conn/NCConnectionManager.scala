@@ -239,14 +239,14 @@ object NCConnectionManager extends NCService {
                             // Seems to be a Scala bug.
 
                             // {element ID → {value → value synonyms}}
-                            val ctxSyns: Map[String, Map[String, Set[String]]] =
+                            val ctxSyns: Map[String, Map[String, Map[String, String]]] =
                                 mdl.getElements.asScala.filter(_.isContextWordSupport).map(e ⇒ {
                                     // Gets single word text synonyms, its existing should be already validated.
                                     val syns = m.synonyms(e.getId)(1).toSet
 
                                     require(syns.nonEmpty)
 
-                                    e.getId → syns.groupBy(_.value).map(p ⇒ p._1 → p._2.map(_.stems))
+                                    e.getId → syns.groupBy(_.value).map(p ⇒ p._1 → p._2.map(p ⇒ p.texts → p.stems).toMap)
 
                                 }).toMap
 
@@ -260,8 +260,8 @@ object NCConnectionManager extends NCService {
                                 mdl.getName,
                                 mdl.getVersion,
                                 new util.HashSet[String](mdl.getEnabledBuiltInTokens),
-                                new util.HashMap[String, util.Map[String, util.Set[String]]](
-                                    ctxSyns.map(p ⇒ p._1 → p._2.map(x ⇒ x._1 → x._2.asJava).asJava).asJava
+                                new util.HashMap[String, util.Map[String, util.Map[String, String]]](
+                                    ctxSyns.map(p ⇒ p._1 → p._2.map(p ⇒ p._1 → p._2.asJava).asJava).asJava
                                 ),
                                 new util.HashSet[String](mdl.getExamples),
                                 mdl.getMetadata

@@ -46,6 +46,7 @@ class NCSynonym(
     lazy val dslChunks: Int = count(_.kind == DSL)
     lazy val isValueSynonym: Boolean = value != null
     lazy val stems: String = map(_.wordStem).mkString(" ")
+    lazy val texts: String = map(_.origText).mkString(" ")
     lazy val stemsHash: Int = stems.hashCode
 
     /**

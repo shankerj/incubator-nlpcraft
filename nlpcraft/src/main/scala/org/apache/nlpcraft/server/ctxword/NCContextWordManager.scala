@@ -140,8 +140,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val post = new HttpPost(url.get)
 
-            println("!!!="+GSON.toJson(restReq))
-
             post.setHeader("Content-Type", "application/json")
             post.setEntity(new StringEntity(GSON.toJson(restReq), "UTF-8"))
 
@@ -274,11 +272,11 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     @throws[NCE]
     def makeConfig(
         mdlId: String,
-        ctxSyns: Map[String /*Element ID*/ , Map[String /*Value*/, Set[String] /*Values synonyms stems*/ ]],
+        ctxSyns: Map[String /*Element ID*/, Map[String /*Value*/, Map[String, String] /*Synonym texts and stems*/ ]],
         examples: Set[String],
         modelMeta: Map[String, AnyRef]
     ): NCContextWordConfigMdo = {
-        val syns = ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.map(_ → value) } }
+        val syns = ctxSyns.map { case (elemId, map) ⇒ elemId → map.flatMap { case (value, syns) ⇒ syns.values.map(_ → value) } }
 
         val exCfg = collection.mutable.HashMap.empty[String, Seq[NCExampleMdo]]
         val normExs: Set[Seq[NCNlpWord]] = examples.map(parser.parse(_))
@@ -286,32 +284,34 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         case class Holder(request: NCContextWordRequest, elementId: String)
 
         val allReqs: Seq[Holder] =
-            ctxSyns.map { case (elemId, map) ⇒ elemId → map.values.flatten.toSet }.flatMap { case (elemId, allElemSyns) ⇒
-                val elemNormExs: Map[Seq[NCNlpWord], Map[Int, String]] =
-                    normExs.flatMap(e ⇒ {
-                        val indexes = e.zipWithIndex.flatMap {
-                            case (w, idx) ⇒ if (allElemSyns.contains(w.stem)) Some(idx → w.pos) else None
-                        }.toMap
+            // ctxSyns.map { case (elemId, map) ⇒ elemId → map.values.flatten.toSet }.flatMap { case (elemId, allElemSyns) ⇒
+            ctxSyns.map { case (elemId, m) ⇒ elemId → (m.values.flatMap(_.keySet).toSeq, m.values.flatMap(_.values).toSeq) }.
+                flatMap { case (elemId, (texts, stems)) ⇒
+                    val elemNormExs: Map[Seq[NCNlpWord], Map[Int, String]] =
+                        normExs.flatMap(e ⇒ {
+                            val indexes = e.zipWithIndex.flatMap {
+                                case (w, idx) ⇒ if (stems.contains(w.stem)) Some(idx → w.pos) else None
+                            }.toMap
 
-                        if (indexes.nonEmpty) Some(e → indexes) else None
-                    }).toMap
+                            if (indexes.nonEmpty) Some(e → indexes) else None
+                        }).toMap
 
-                if (elemNormExs.isEmpty)
-                    throw new NCE(s"Examples not found for element: $elemId")
+                    if (elemNormExs.isEmpty)
+                        throw new NCE(s"Examples not found for element: $elemId")
 
-                exCfg += elemId → elemNormExs.map { case (ex, substs) ⇒ NCExampleMdo(ex.map(_.word), substs) }.toSeq
+                    exCfg += elemId → elemNormExs.map { case (ex, substs) ⇒ NCExampleMdo(ex.map(_.word), substs) }.toSeq
 
-                elemNormExs.flatMap { case (ex, substs) ⇒
-                    val exWords = ex.map(_.word)
+                    elemNormExs.flatMap { case (ex, substs) ⇒
+                        val exWords = ex.map(_.word)
 
-                    allElemSyns.toSeq.combinations(substs.size).flatMap(comb ⇒ {
-                        require(comb.size == substs.size)
+                        texts.combinations(substs.size).flatMap(comb ⇒ {
+                            require(comb.size == substs.size)
 
-                        val words = substitute(exWords, substs.zip(comb).map { case ((idx, pos), w) ⇒ Word(w, idx, pos) })
+                            val words = substitute(exWords, substs.zip(comb).map { case ((idx, pos), w) ⇒ Word(w, idx, pos) })
 
-                        substs.keys.map(NCContextWordRequest(words, _))
-                    })
-                }.toSeq.map(req ⇒ Holder(req, elemId))
+                            substs.keys.map(NCContextWordRequest(words, _))
+                        })
+                    }.toSeq.map(req ⇒ Holder(req, elemId))
             }.toSeq
 
         val elemFs = mkElementsFactors(modelMeta, CFG_DEFAULTS, ctxSyns.keySet.toSet)
@@ -339,13 +339,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     toSeq.
                     filter(_.percent >= fs.get(elemId, "min.element.percent"))
 
-                println("eelem="  +elemId)
-                println("exCnt="  +cnt)
-                println("seq="  +seq.size)
-                println("suggs"  +suggs.size)
-                println("all"  +seq.flatMap(_._2.map(_.word)).mkString("|"))
-
-
                 if (suggs.isEmpty)
                     throw new NCE(s"Context words cannot be prepared for element: '$elemId'")
 
@@ -355,7 +348,6 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         logger.whenInfoEnabled({
             val tblWords = NCAsciiTable()
 
-            // TODO: > 100
             tblWords #= ("Element", "Context word", "ContextWord score", "Count", "Percent")
 
             groups.foreach { case (elemId, elemGroups) ⇒
@@ -364,7 +356,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                 def f(d: Double): String = "%1.3f" format d
 
                 elemGroups.
-                    sortBy(-_.percent).
+                    sortBy(p ⇒ (-p.percent, -p.group.word.totalScore)).
                     foreach(g ⇒ tblWords += ("", g.group.word.word, f(g.group.word.totalScore), g.group.count, f(g.percent)))
             }
 
@@ -392,7 +384,23 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             tblExamles.info(logger, Some(s"Examples for model: $mdlId"))
 
-            // TODO: log factors
+            val tblFs = NCAsciiTable()
+
+            tblFs #= ("Element", "Factor name", "Factor value")
+
+            for ((elemId, m) ← fs.elementsFactors; (name, value) ← m)
+                tblFs += (elemId, name, value)
+
+            tblFs.info(logger, Some(s"Elements factors"))
+
+            val tblFsMin = NCAsciiTable()
+
+            tblFsMin #= ("Factor name", "Factor value")
+
+            for ((name, value) ← fs.minimalFactors)
+                tblFsMin += (name, value)
+
+            tblFsMin.info(logger, Some(s"Minimal factors(for all elements)"))
         })
 
         NCContextWordConfigMdo(

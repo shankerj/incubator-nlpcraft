@@ -581,7 +581,7 @@ object NCProbeManager extends NCService {
                     name: String,
                     version: String,
                     enabledBuiltInTokens: Set[String],
-                    ctxSynonyms: Map[String, Map[String, Set[String]]],
+                    ctxSynonyms: Map[String, Map[String, Map[String, String]]],
                     examples: Set[String],
                     meta: Map[String, AnyRef]
                 )
@@ -592,7 +592,7 @@ object NCProbeManager extends NCService {
                         String,
                         String,
                         java.util.Set[String],
-                        java.util.Map[String, java.util.Map[String, java.util.Set[String]]],
+                        java.util.Map[String, java.util.Map[String, java.util.Map[String, String]]],
                         java.util.Set[String],
                         java.util.Map[String, AnyRef]
                     )]]("PROBE_MODELS").
@@ -612,7 +612,7 @@ object NCProbeManager extends NCService {
                                 enabledBuiltInTokens = enabledBuiltInToks.asScala.toSet,
                                 ctxSynonyms =
                                     mlSyns.asScala.
-                                        map(p ⇒ p._1 → p._2.asScala.map(x ⇒ x._1 → x._2.asScala.toSet).toMap).toMap,
+                                        map(p ⇒ p._1 → p._2.asScala.map(y ⇒ y._1 → y._2.asScala.toMap).toMap).toMap,
                                 examples = examples.asScala.toSet,
                                 meta.asScala.toMap
                             )
@@ -638,7 +638,14 @@ object NCProbeManager extends NCService {
                                     enabledBuiltInTokens = m.enabledBuiltInTokens,
                                     ctxWordsConfig =
                                         if (m.ctxSynonyms.nonEmpty)
-                                            Some(NCContextWordManager.makeConfig(m.id, m.ctxSynonyms, m.examples, m.meta))
+                                            Some(
+                                                NCContextWordManager.makeConfig(
+                                                    m.id,
+                                                    m.ctxSynonyms,
+                                                    m.examples,
+                                                    m.meta
+                                                )
+                                            )
                                         else
                                             None
                                 )

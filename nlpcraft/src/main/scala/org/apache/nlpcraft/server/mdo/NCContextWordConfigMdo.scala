@@ -45,7 +45,7 @@ case class NCContextWordFactors(
 @NCMdoEntity(sql = false)
 case class NCContextWordConfigMdo(
     @NCMdoField synonyms: Map[String /*Element ID*/, Map[String /*Synonym stem*/, String /*Value*/]],
-    @NCMdoField contextWords: Map[String /*Element ID*/, Set[String]/*Stems*/],
+    @NCMdoField contextWords: Map[String /*Element ID*/, Set[String]/*Synonym texts*/],
     @NCMdoField examples: Map[String /*Element ID*/, Seq[NCExampleMdo]/*Examples*/],
     @NCMdoField poses: Set[String],/*All possible POSes of context words*/
     @NCMdoField factors: NCContextWordFactors
