@@ -387,6 +387,8 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             tblExamles.info(logger, Some(s"Examples for model: $mdlId"))
 
+            val sortedFactors = fs.minimalFactors.keys.toSeq.sorted
+
             val tblFs = NCAsciiTable()
 
             tblFs #= ("Element", "Factor name", "Factor value")
@@ -394,20 +396,13 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             for ((elemId, m) ← fs.elementsFactors) {
                 tblFs += (elem2Str(elemId), "", "")
 
-                for ((name, value) ← m)
-                    tblFs += ("", name, value)
+                for (f ← sortedFactors)
+                    tblFs += ("", f, m(f))
             }
 
+            tblFs += ("All elements minimal values", "", "")
+
             tblFs.info(logger, Some(s"Elements factors"))
-
-            val tblFsMin = NCAsciiTable()
-
-            tblFsMin #= ("Factor name", "Factor value")
-
-            for ((name, value) ← fs.minimalFactors)
-                tblFsMin += (name, value)
-
-            tblFsMin.info(logger, Some(s"Minimal factors (for all elements)"))
         })
 
         NCContextWordConfigMdo(

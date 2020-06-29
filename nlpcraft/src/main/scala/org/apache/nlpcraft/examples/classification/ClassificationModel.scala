@@ -51,9 +51,9 @@ class ClassificationModel extends NCModelFileAdapter("org/apache/nlpcraft/exampl
 
         val elemFactors = new java.util.HashMap[String, java.util.Map[String, Double]]()
 
-        elemFactors.put("class:carBrand", mkFactors(.9, .01, 0.5, 0.5, 0.5, 0.5))
-        elemFactors.put("class:animal", mkFactors(.9, 0.5, 0.5, 0.5, 0.5, 0.5))
-        elemFactors.put("class:weather", mkFactors(.9, 0.5, 0.5, 0.5, 0.5, 0.5))
+        elemFactors.put("class:carBrand", mkFactors(1, .05, 0.5, 0.5, 0.5, 0.8))
+        elemFactors.put("class:animal", mkFactors(1, 0.5, 0.5, 0.5, 0.5, 0.8))
+        elemFactors.put("class:weather", mkFactors(1, 0.5, 0.5, 0.5, 0.5, 0.8))
 
         md.put("ctx.words.factors", elemFactors)
 
