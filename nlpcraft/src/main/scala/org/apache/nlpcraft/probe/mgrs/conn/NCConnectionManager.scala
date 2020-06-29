@@ -246,7 +246,9 @@ object NCConnectionManager extends NCService {
 
                                     require(syns.nonEmpty)
 
-                                    e.getId → syns.groupBy(_.value).map(p ⇒ p._1 → p._2.map(p ⇒ p.texts → p.stems).toMap)
+                                    e.getId → syns.
+                                        groupBy(_.value).
+                                        map { case (value, syns) ⇒ value → syns.map(syn ⇒ syn.texts → syn.stems).toMap }
 
                                 }).toMap
 

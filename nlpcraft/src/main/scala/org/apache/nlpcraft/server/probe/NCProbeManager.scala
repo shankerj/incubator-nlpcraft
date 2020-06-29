@@ -612,7 +612,11 @@ object NCProbeManager extends NCService {
                                 enabledBuiltInTokens = enabledBuiltInToks.asScala.toSet,
                                 ctxSynonyms =
                                     mlSyns.asScala.
-                                        map(p ⇒ p._1 → p._2.asScala.map(y ⇒ y._1 → y._2.asScala.toMap).toMap).toMap,
+                                        map { case (elemId, syns) ⇒
+                                            elemId → syns.asScala.map {
+                                                case (value, synsMap) ⇒ value → synsMap.asScala.toMap
+                                            }.toMap
+                                        }.toMap,
                                 examples = examples.asScala.toSet,
                                 meta.asScala.toMap
                             )

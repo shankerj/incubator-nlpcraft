@@ -272,7 +272,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
     @throws[NCE]
     def makeConfig(
         mdlId: String,
-        ctxSyns: Map[String /*Element ID*/, Map[String /*Value*/, Map[String, String] /*Synonym texts and stems*/ ]],
+        ctxSyns: Map[String /*Element ID*/, Map[String /*Value*/, Map[String /*Synonym stem*/, String /*Value*/]]],
         examples: Set[String],
         modelMeta: Map[String, AnyRef]
     ): NCContextWordConfigMdo = {
@@ -335,6 +335,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                     flatMap { case (_, seq) ⇒ seq }.
                     filter(_.totalScore >= fs.get(elemId, "min.element.total.score")).
                     groupBy(_.stem).
+                    // TODO: > 100 percent.
                     map { case (_, g) ⇒ GroupFactor(Group(g.minBy(-_.totalScore), g.size), g.size / cnt) }.
                     toSeq.
                     filter(_.percent >= fs.get(elemId, "min.element.percent"))
@@ -348,10 +349,12 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
         logger.whenInfoEnabled({
             val tblWords = NCAsciiTable()
 
+            def elem2Str(elemId: String): String = s"Element ID: '$elemId'"
+
             tblWords #= ("Element", "Context word", "ContextWord score", "Count", "Percent")
 
             groups.foreach { case (elemId, elemGroups) ⇒
-                tblWords += (s"Element ID: '$elemId'", "", "", "", "")
+                tblWords += (elem2Str(elemId), "", "", "", "")
 
                 def f(d: Double): String = "%1.3f" format d
 
@@ -364,10 +367,10 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             val tblExamles = NCAsciiTable()
 
-            tblExamles #= ("Element", "Example (text and substitutions positions and POSes)")
+            tblExamles #= ("Element", "Example (text, substitutions positions and POSes)")
 
             exCfg.foreach { case (elemId, examples) ⇒
-                tblExamles += (s"Element ID: '$elemId'", "")
+                tblExamles += (elem2Str(elemId), "")
 
                 examples.foreach(e ⇒ {
                     val txt = e.words.mkString(" ")
@@ -378,7 +381,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
                             map { case (idx, pos) ⇒ s"$idx($pos)" }.
                             mkString(", ")
 
-                    tblExamles += ("", s"$txt, [$substs]")
+                    tblExamles += ("", s"$txt { $substs }")
                 })
             }
 
@@ -388,8 +391,12 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
 
             tblFs #= ("Element", "Factor name", "Factor value")
 
-            for ((elemId, m) ← fs.elementsFactors; (name, value) ← m)
-                tblFs += (elemId, name, value)
+            for ((elemId, m) ← fs.elementsFactors) {
+                tblFs += (elem2Str(elemId), "", "")
+
+                for ((name, value) ← m)
+                    tblFs += ("", name, value)
+            }
 
             tblFs.info(logger, Some(s"Elements factors"))
 
@@ -400,7 +407,7 @@ object NCContextWordManager extends NCService with NCOpenCensusServerStats with 
             for ((name, value) ← fs.minimalFactors)
                 tblFsMin += (name, value)
 
-            tblFsMin.info(logger, Some(s"Minimal factors(for all elements)"))
+            tblFsMin.info(logger, Some(s"Minimal factors (for all elements)"))
         })
 
         NCContextWordConfigMdo(
