@@ -39,7 +39,6 @@ import org.apache.nlpcraft.server.nlp.core.NCNlpServerManager
 import org.apache.nlpcraft.server.nlp.enrichers.NCServerEnrichmentManager
 import org.apache.nlpcraft.server.nlp.preproc.NCPreProcessManager
 import org.apache.nlpcraft.server.nlp.spell.NCSpellCheckManager
-import org.apache.nlpcraft.server.nlp.synonym.NCSynonymManager
 import org.apache.nlpcraft.server.nlp.wordnet.NCWordNetManager
 import org.apache.nlpcraft.server.probe.NCProbeManager
 import org.apache.nlpcraft.server.proclog.NCProcessLogManager
@@ -102,7 +101,6 @@ object NCServer extends App with NCIgniteInstance with LazyLogging with NCOpenCe
                 },
                 () ⇒ {
                     NCWordNetManager.start(span)
-                    NCSynonymManager.start(span)
                 },
                 () ⇒ {
                     NCDictionaryManager.start(span)
@@ -157,7 +155,6 @@ object NCServer extends App with NCIgniteInstance with LazyLogging with NCOpenCe
                 NCNlpServerManager,
                 NCGeoManager,
                 NCPreProcessManager,
-                NCSynonymManager,
                 NCSpellCheckManager,
                 NCDictionaryManager,
                 NCWordNetManager,

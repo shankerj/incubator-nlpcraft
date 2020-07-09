@@ -24,7 +24,7 @@
     <name>NLPCraft Parent</name>
     <groupId>org.apache.nlpcraft</groupId>
     <artifactId>nlpcraft-parent</artifactId>
-    <version>0.6.1</version>
+    <version>0.6.2</version>
     <packaging>pom</packaging>
 
     <url>https://nlpcraft.apache.org</url>
@@ -427,6 +427,12 @@
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
+                <version>${jackson.ver}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.fasterxml.jackson.module</groupId>
+                <artifactId>jackson-module-scala_2.12</artifactId>
                 <version>${jackson.ver}</version>
             </dependency>
 
