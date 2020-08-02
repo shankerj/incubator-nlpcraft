@@ -735,6 +735,7 @@ object NCProbeManager extends NCService {
                         val resTypeOpt = probeMsg.dataOpt[String]("resType")
                         val resBodyOpt = probeMsg.dataOpt[String]("resBody")
                         val logJson = probeMsg.dataOpt[String]("log")
+                        val intentId = probeMsg.dataOpt[String]("intentId")
 
                         if (errOpt.isDefined) { // Error.
                             val err = errOpt.get
@@ -758,7 +759,8 @@ object NCProbeManager extends NCService {
                                 srvReqId,
                                 resType,
                                 resBody,
-                                logJson
+                                logJson,
+                                intentId
                             )
                      
                             logger.trace(s"OK result processed [srvReqId=$srvReqId]")
@@ -774,8 +776,6 @@ object NCProbeManager extends NCService {
                                 NCErrorCodes.UNEXPECTED_ERROR
                             )
                     }
-                    
-                
                 case _ ⇒
                     logger.error(s"Received unrecognized probe message (ignoring): $probeMsg")
             }

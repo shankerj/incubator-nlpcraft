@@ -74,10 +74,6 @@
             <artifactId>antlr4-runtime</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.jgrapht</groupId>
-            <artifactId>jgrapht-core</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-text</artifactId>
         </dependency>
@@ -143,10 +139,6 @@
                     <artifactId>annotations</artifactId>
                 </exclusion>
             </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>org.scalatest</groupId>
-            <artifactId>scalatest_${scala.base}</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
@@ -217,10 +209,6 @@
             <artifactId>jackson-module-scala_2.12</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
-        </dependency>
-        <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-language</artifactId>
         </dependency>
@@ -243,6 +231,18 @@
         <dependency>
             <groupId>org.jibx</groupId>
             <artifactId>jibx-tools</artifactId>
+        </dependency>
+
+        <!-- Test dependencies. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.scalatest</groupId>
+            <artifactId>scalatest_${scala.base}</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
