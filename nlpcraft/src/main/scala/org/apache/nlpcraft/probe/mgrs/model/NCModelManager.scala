@@ -635,8 +635,9 @@ object NCModelManager extends NCService with DecorateAsScala {
         val ctxElements = mdl.getElements.asScala.filter(_.isContextWordSupport)
 
         if (ctxElements.nonEmpty) {
-            val examples =
-                mdl.getExamples.asScala.map(s ⇒ NCNlpCoreManager.tokenize(s).map(t ⇒ NCNlpCoreManager.stemWord(t.token)))
+            val examples: Map[String, String] = null // TODO:
+
+                // mdl.getExamples.asScala.map(s ⇒ NCNlpCoreManager.tokenize(s).map(t ⇒ NCNlpCoreManager.stemWord(t.token)))
 
             ctxElements.foreach(e ⇒ {
                 val elemSyns = syns.filter(_.elementId == e.getId)
@@ -653,8 +654,8 @@ object NCModelManager extends NCService with DecorateAsScala {
                             s"unsupported: ${bad.mkString(",")}"
                     )
 
-                if (!elemSyns.exists(s ⇒ examples.exists(_.contains(s.synonym.stems))))
-                    throw new NCE(s"Examples not found for context words element '${e.getId}'")
+//                if (!elemSyns.exists(s ⇒ examples.exists(_.contains(s.synonym.stems))))
+//                    throw new NCE(s"Examples not found for context words element '${e.getId}'")
             })
         }
     }

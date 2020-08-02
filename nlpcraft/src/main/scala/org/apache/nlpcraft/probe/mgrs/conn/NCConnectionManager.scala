@@ -265,7 +265,7 @@ object NCConnectionManager extends NCService {
                                 new util.HashMap[String, util.Map[String, util.Map[String, String]]](
                                     ctxSyns.map(p ⇒ p._1 → p._2.map(p ⇒ p._1 → p._2.asJava).asJava).asJava
                                 ),
-                                new util.HashSet[String](mdl.getExamples),
+                                new util.HashSet[String](), // TODO: examples for all intents  - add here/
                                 mdl.getMetadata
                             )
                         })
